@@ -1,0 +1,7 @@
+# Changes to the delivery pipeline, infrastructure and the eval contract
+# require owner review - the gate cannot be weakened in the same PR it gates.
+/.github/                  @mjhoffmeister
+/infra/                    @mjhoffmeister
+/evals/thresholds.yaml     @mjhoffmeister
+/evals/gate.py             @mjhoffmeister
+/evals/datasets/           @mjhoffmeister

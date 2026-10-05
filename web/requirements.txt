@@ -1,0 +1,7 @@
+fastapi==0.124.4
+uvicorn[standard]==0.38.0
+httpx==0.28.1
+azure-identity==1.26.0
+azure-monitor-opentelemetry==1.8.3
+pydantic==2.12.5
+aiohttp>=3.12

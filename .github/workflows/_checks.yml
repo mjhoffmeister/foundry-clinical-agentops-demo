@@ -1,0 +1,28 @@
+name: _checks
+
+# Credential-free checks: lint + unit tests + agent middleware tests.
+# Reused by ci.yml, ci-fork.yml and release.yml.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: lint + unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.14"
+      - name: Sync tooling
+        run: uv sync --group dev
+      - name: Lint
+        run: uv run ruff check .
+      - name: Unit tests (checks, validator, graders, gate)
+        run: uv run pytest -q
+      - name: Agent middleware tests
+        run: uv run --project agent --with pytest pytest -q tests/agent -p no:cacheprovider

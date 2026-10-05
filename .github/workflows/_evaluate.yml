@@ -1,0 +1,121 @@
+name: _evaluate
+
+# Deploy the checked-out agent code as a NEW candidate version (production
+# traffic is untouched: the endpoint selector stays pinned), then run the eval
+# gate against exactly that version. Fails closed.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: label used for the Foundry evaluation names
+        type: string
+        required: true
+    outputs:
+      candidate_version:
+        value: ${{ jobs.evaluate.outputs.candidate_version }}
+      prod_version_before:
+        value: ${{ jobs.evaluate.outputs.prod_version_before }}
+      gate:
+        value: ${{ jobs.evaluate.outputs.gate }}
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+  actions: read
+
+env:
+  AZURE_CLIENT_ID: ${{ vars.AZURE_CI_CANDIDATE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+  AGENT_NAME: ${{ vars.AGENT_NAME }}
+  AZURE_SEARCH_ENDPOINT: ${{ vars.AZURE_SEARCH_ENDPOINT }}
+  AZURE_AI_JUDGE_DEPLOYMENT_NAME: ${{ vars.AZURE_AI_JUDGE_DEPLOYMENT_NAME }}
+  AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZURE_AI_MODEL_DEPLOYMENT_NAME }}
+
+jobs:
+  evaluate:
+    name: deploy candidate + eval gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      candidate_version: ${{ steps.candidate.outputs.version }}
+      prod_version_before: ${{ steps.prod.outputs.pinned_version }}
+      gate: ${{ steps.gate.outputs.result }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.14"
+      - run: uv sync
+
+      - name: Azure login (workload identity federation, candidate identity)
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Record production selector
+        id: prod
+        run: uv run python scripts/foundry_agents.py --github-output selector
+
+      - name: Create candidate version (not serving production traffic)
+        id: candidate
+        env:
+          DESCRIPTION: "${{ github.event_name }} ${{ github.sha }} ${{ github.event.pull_request.title || github.event.head_commit.message }}"
+        run: uv run python scripts/foundry_agents.py --github-output create-version --description "$DESCRIPTION"
+
+      - name: Run evals against candidate v${{ steps.candidate.outputs.version }}
+        run: |
+          uv run python evals/run_eval.py \
+            --version "${{ steps.candidate.outputs.version }}" \
+            --tag "${{ inputs.tag }}-v${{ steps.candidate.outputs.version }}" \
+            --out evals/results/candidate
+
+      - name: Baseline metrics from last production release
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id=$(gh run list --workflow release.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ -n "$run_id" ]; then
+            gh run download "$run_id" --name eval-results-candidate --dir evals/results/baseline
+          fi
+
+      - name: Eval gate (fail closed)
+        id: gate
+        if: always()
+        run: |
+          baseline=""
+          [ -f evals/results/baseline/candidate/results.json ] && baseline="--baseline evals/results/baseline/candidate/results.json"
+          set +e
+          uv run python evals/gate.py evals/results/candidate/results.json $baseline | tee evals/results/gate.md
+          code=${PIPESTATUS[0]}
+          if [ "$code" = "0" ]; then echo "result=pass" >> "$GITHUB_OUTPUT"; else echo "result=fail" >> "$GITHUB_OUTPUT"; fi
+          exit $code
+
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: eval-results-candidate
+          path: evals/results/
+          if-no-files-found: warn
+
+      - name: Comment on PR
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "<!-- eval-gate -->"
+            echo "Candidate agent version **${{ steps.candidate.outputs.version || 'n/a' }}** (production stays on **${{ steps.prod.outputs.pinned_version }}**)"
+            echo
+            cat evals/results/gate.md 2>/dev/null || echo "Eval gate did not produce results - failing closed."
+          } > comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.md --edit-last --create-if-none \
+            || gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.md

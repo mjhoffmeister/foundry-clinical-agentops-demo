@@ -1,0 +1,34 @@
+name: ci
+
+# Pull requests from this repository: credential-free checks, then deploy the
+# PR's agent code as a candidate version and gate on evals. The "eval-gate"
+# job is a required status check on main.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    uses: ./.github/workflows/_checks.yml
+
+  eval-gate:
+    # Fork PRs never receive Azure credentials (see ci-fork.yml).
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    needs: checks
+    uses: ./.github/workflows/_evaluate.yml
+    with:
+      tag: pr${{ github.event.pull_request.number }}
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+      actions: read
+    secrets: inherit

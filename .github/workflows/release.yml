@@ -1,0 +1,113 @@
+name: release
+
+# Merge to main: re-run checks and the eval gate on the merged code (new
+# candidate version), then - only after a human approves the "production"
+# environment - pin the endpoint selector to that version (compare-and-swap),
+# deploy the web UI if it changed, and smoke test production.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agent/**"
+      - "evals/**"
+      - "web/**"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/_evaluate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-deploy
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/_checks.yml
+
+  eval-gate:
+    needs: checks
+    uses: ./.github/workflows/_evaluate.yml
+    with:
+      tag: main-${{ github.run_number }}
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+      actions: read
+    secrets: inherit
+
+  promote:
+    name: promote to production
+    needs: eval-gate
+    if: needs.eval-gate.outputs.gate == 'pass'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.WEB_APP_URL }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CI_PROMOTE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      AGENT_NAME: ${{ vars.AGENT_NAME }}
+      CANDIDATE: ${{ needs.eval-gate.outputs.candidate_version }}
+      PROD_BEFORE: ${{ needs.eval-gate.outputs.prod_version_before }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.14"
+      - run: uv sync
+
+      - name: Azure login (workload identity federation, promote identity)
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Pin production to v${{ env.CANDIDATE }} (compare-and-swap on v${{ env.PROD_BEFORE }})
+        run: uv run python scripts/foundry_agents.py pin --version "$CANDIDATE" --expect-current "$PROD_BEFORE"
+
+      - name: Did web/ change?
+        id: web
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "${{ github.event_name }}" != "push" ] || [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null \
+             || [ -n "$(git diff --name-only "$BEFORE" "$GITHUB_SHA" -- web/)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy web UI
+        if: steps.web.outputs.changed == 'true'
+        run: |
+          (cd web && zip -qr ../web.zip . -x '*.pyc' -x '__pycache__/*' -x '.venv/*')
+          az webapp deploy -g "${{ vars.AZURE_RESOURCE_GROUP }}" -n "${{ vars.WEB_APP_NAME }}" \
+            --src-path web.zip --type zip --async false --track-status false
+
+      - name: Smoke test production
+        run: uv run python scripts/smoke.py --expect-agent-version "$CANDIDATE"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Promotion"
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Production before | v$PROD_BEFORE |"
+            echo "| Production now | v$CANDIDATE |"
+            echo "| Rollback | \`python scripts/foundry_agents.py pin --version $PROD_BEFORE\` or run the **reset** workflow |"
+          } >> "$GITHUB_STEP_SUMMARY"

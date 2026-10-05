@@ -1,0 +1,15 @@
+.azure/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.env
+data/.cache/
+data/corpus.jsonl
+evals/results/
+infra/.terraform/
+infra/*.tfstate*
+infra/*.tfplan
+*.zip
+uv.lock

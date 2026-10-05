@@ -1,0 +1,12 @@
+# Toolbox consumed by the hosted agent: exposes the Foundry IQ knowledge base's
+# MCP endpoint (knowledge_base_retrieve) through the `knowledge-base-mcp`
+# connection, authenticated with the agent's own identity (Agentic Identity).
+# ${KB_MCP_ENDPOINT} is resolved by scripts/postprovision.ps1.
+description: Foundry IQ clinical knowledge base (MedQuAD) behind one endpoint
+tools:
+  - type: mcp
+    name: knowledge_base
+    server_label: knowledge_base
+    server_url: ${KB_MCP_ENDPOINT}
+    project_connection_id: knowledge-base-mcp
+    require_approval: never

@@ -1,0 +1,60 @@
+name: reset
+
+# Demo reset (production half): pin the endpoint selector back to the baseline
+# version recorded in demo/baseline.json and smoke test it. The repository half
+# (closing demo PRs, restoring the prompt) is done by demo/reset.ps1 because
+# branch protection rightly prevents the workflow token from pushing to main.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: version to pin (default demo/baseline.json)
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-deploy
+  cancel-in-progress: false
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CI_PROMOTE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      AGENT_NAME: ${{ vars.AGENT_NAME }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.14"
+      - run: uv sync
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+      - name: Resolve baseline
+        id: base
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          v="${INPUT_VERSION:-$(jq -r .agent_version demo/baseline.json)}"
+          p="$(jq -r .prompt_version demo/baseline.json)"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "prompt=$p" >> "$GITHUB_OUTPUT"
+      - name: Pin baseline v${{ steps.base.outputs.version }}
+        run: uv run python scripts/foundry_agents.py pin --version "${{ steps.base.outputs.version }}"
+      - name: Smoke test
+        run: |
+          uv run python scripts/smoke.py --expect-agent-version "${{ steps.base.outputs.version }}" \
+            --expect-prompt-version "${{ steps.base.outputs.prompt }}"

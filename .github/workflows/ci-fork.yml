@@ -1,0 +1,17 @@
+name: ci-fork
+
+# Pull requests from forks: checks only. No id-token permission, no Azure
+# identity, no candidate deployment. A maintainer must re-open the change from
+# a branch in this repository for it to be evaluated.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    uses: ./.github/workflows/_checks.yml

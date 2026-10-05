@@ -1,0 +1,12 @@
+[project]
+name = "clinical-knowledge-agent"
+version = "1.0.0"
+description = "Clinical knowledge hosted agent (Foundry IQ grounded) for the AgentOps demo."
+requires-python = ">=3.14"
+dependencies = [
+    "agent-framework-core==1.19.0",
+    "agent-framework-foundry==1.13.1",
+    "agent-framework-foundry-hosting==1.0.0b260918",
+    "azure-identity>=1.26.0",
+    "opentelemetry-api>=1.44.0",
+]
