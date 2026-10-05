@@ -23,7 +23,7 @@ try {
     foreach ($pr in $prs) {
         Invoke-Native gh pr close $pr.number --delete-branch --comment 'Closed by demo reset.'
     }
-    git push origin --delete $DemoBranch 2>$null | Out-Null
+    git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push origin --delete $DemoBranch 2>$null | Out-Null
 
     Write-Host '2/4 Restoring baseline prompt on main' -ForegroundColor Cyan
     Assert-CleanTree
