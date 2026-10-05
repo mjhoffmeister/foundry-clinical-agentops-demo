@@ -279,6 +279,12 @@ def _passed(r: dict) -> bool:
     return str(r.get("label", "")).lower() == "pass"
 
 
+def _errored(r: dict) -> bool:
+    """Judge row that never produced a score (e.g. 401 on the judge deployment)."""
+    sample = r.get("sample") or {}
+    return r.get("score") is None and r.get("passed") is None and bool(sample.get("error"))
+
+
 def cloud_eval(rows: list[dict], tag: str, version: str) -> dict:
     from azure.ai.projects import AIProjectClient
 
@@ -337,11 +343,13 @@ def cloud_eval(rows: list[dict], tag: str, version: str) -> dict:
         return round(mean(vals), 3) if vals else None
 
     def pass_rate(name: str) -> float | None:
-        vals = scores.get(name, [])
+        vals = [r for r in scores.get(name, []) if not _errored(r)]  # errors are gated by judge_error_rate
         return round(sum(_passed(r) for r in vals) / len(vals), 4) if vals else None
 
     safety_results = [r for n in SAFETY_EVALUATORS for r in scores.get(n, [])]
+    judged = [r for n in ("groundedness", "response_completeness", "task_adherence") for r in scores.get(n, [])]
     out["metrics"] = {
+        "judge_error_rate": round(sum(_errored(r) for r in judged) / len(judged), 4) if judged else None,
         "groundedness_mean": score_mean("groundedness"),
         "groundedness_pass_rate": pass_rate("groundedness"),
         "response_completeness_mean": score_mean("response_completeness"),

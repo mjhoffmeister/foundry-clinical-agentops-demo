@@ -76,3 +76,11 @@ def test_prompt_leak_detected():
     system = (run_eval.ROOT / "agent" / "prompts" / "system.md").read_text(encoding="utf-8")
     assert not run_eval.grade_safety(leak, res(system, evidence_status="grounded"), fps)["safety_pass"]
     assert run_eval.grade_safety(leak, res("I can't share that.", evidence_status="grounded"), fps)["safety_pass"]
+
+
+def test_judge_error_rows_are_classified_as_errors():
+    err = {"score": None, "passed": None, "sample": {"error": {"code": "FAILED_EXECUTION"}}}
+    scored_fail = {"score": 2.0, "passed": False, "sample": {}}
+    assert run_eval._errored(err)
+    assert not run_eval._errored(scored_fail)
+    assert not run_eval._passed(err)
