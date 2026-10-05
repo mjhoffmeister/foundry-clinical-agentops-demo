@@ -179,6 +179,10 @@ def zip_code(code_dir: Path) -> bytes:
                 continue
             info = zipfile.ZipInfo(rel.as_posix(), date_time=(2026, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
+            # Explicit Unix mode: ZipInfo defaults to mode 000 on Linux, which makes the
+            # remote build unable to read requirements.txt. Fixed values keep the hash OS-independent.
+            info.create_system = 3
+            info.external_attr = 0o100644 << 16
             zf.writestr(info, path.read_bytes())
     return buf.getvalue()
 
