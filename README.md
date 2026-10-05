@@ -87,7 +87,8 @@ az login --tenant <tenant>
 azd env new clinical-agentops-demo
 azd env set AZURE_SUBSCRIPTION_ID <subscription>
 azd env set AZURE_LOCATION eastus2
-azd up                                     # Terraform (AzAPI) → postprovision builds the KB/toolbox
+$env:ARM_TENANT_ID = '<tenant>'; $env:ARM_SUBSCRIPTION_ID = '<subscription>'   # pin Terraform's az CLI auth
+azd up                                      # Terraform (AzAPI) → postprovision builds the KB/toolbox
                                            # → deploys the hosted agent + web → postdeploy grants
                                            #   the agent identity Search Index Data Reader
 
@@ -163,6 +164,7 @@ rather than surfacing as a generic "insufficient evidence" answer.
 | `demo/prep.ps1` | readiness check (sign-ins, production = baseline, no open demo PRs, smoke) + seeds traffic + prints links |
 | `demo/break.ps1` | opens the "shorter answers for mobile clinicians" PR → CI should **fail** the gate |
 | `demo/fix.ps1` | pushes the corrected prompt to the same PR → CI should **pass** |
+| `demo/policy-deny.ps1` | tries to deploy a non-allow-listed model → Azure Policy **deny** (synchronous, nothing created) |
 | `demo/reset.ps1` | closes demo PRs, restores the baseline prompt on `main`, re-pins the baseline version, smoke tests |
 
 See [docs/DEMO-SCRIPT.md](docs/DEMO-SCRIPT.md) for the full run-of-show and

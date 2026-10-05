@@ -148,17 +148,22 @@ The prompt changes to 1.1.1: *a one-sentence answer, then ≤ 5 cited bullets, n
 
 1. **Control Plane → Overview:** agent health, runs, cost. **Assets:** the agent and its versions.
 2. **Compliance:** the built-in Azure Policy audits for guardrail settings (Prompt Shields enabled and blocking, content filters on prompts and completions) and the model allow-list.
-3. **Live deny.** Try to deploy a model that is not on the allow-list:
+3. **Live deny.** Try to deploy a model that is not on the allow-list. The request carries the approved guardrail, so the allow-list is the only thing it violates:
 
    ```powershell
-   az cognitiveservices account deployment create `
-     --subscription $env:AZURE_SUBSCRIPTION_ID -g $env:AZURE_RESOURCE_GROUP `
-     -n $env:AZURE_AI_ACCOUNT_NAME --deployment-name not-approved `
-     --model-name gpt-4.1-nano --model-version 2025-04-14 --model-format OpenAI `
-     --sku-name GlobalStandard --sku-capacity 1
+   pwsh demo/policy-deny.ps1        # PUT deployment gpt-4.1-nano via ARM
    ```
 
-   Expected: `RequestDisallowedByPolicy`, "Foundry: only approved models may be deployed". The deny is synchronous at ARM. Compliance *scans* are asynchronous, so don't promise instant remediation.
+   Expected output:
+   > DENIED by Azure Policy assignment 'foundry-approved-models': Model is not on the approved list for the clinical knowledge workload. Request an exception via the AI governance board.
+
+   The deny is synchronous at ARM and nothing is created. Compliance *scans* are asynchronous, so don't promise instant remediation.
+
+   *Bonus:* without `raiPolicyName`, the same request is rejected by the prompt-shield assignment (`foundry-xpia-shield`). A deployment can't skip the guardrail either. To show it:
+
+   ```powershell
+   az cognitiveservices account deployment create --subscription $env:AZURE_SUBSCRIPTION_ID -g $env:AZURE_RESOURCE_GROUP -n $env:AZURE_AI_ACCOUNT_NAME --deployment-name not-approved --model-name gpt-4.1-nano --model-version 2025-04-14 --model-format OpenAI --sku-name GlobalStandard --sku-capacity 1
+   ```
 4. **Talk track only:** AI Gateway (token limits per consumer), Defender for AI, Purview, and registering non-Foundry agents in Control Plane.
 
 ## 8. Wrap (2 min)

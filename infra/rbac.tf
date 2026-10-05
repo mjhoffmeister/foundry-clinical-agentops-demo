@@ -31,7 +31,10 @@ locals {
     web-ai-user = { principal = azapi_resource.web.identity[0].principal_id, role = "azure_ai_user", scope = azapi_resource.project.id }
 
     # CI candidate: create agent versions, run evals, look up KB passages for groundedness context.
+    # Cloud evaluators call the judge model as the principal that submits the eval run,
+    # so the candidate identity needs OpenAI data-plane access on the account.
     ci-candidate-ai-user       = { principal = azapi_resource.ci_candidate.output.properties.principalId, role = "azure_ai_user", scope = azapi_resource.project.id }
+    ci-candidate-openai-user   = { principal = azapi_resource.ci_candidate.output.properties.principalId, role = "cognitive_services_openai_user", scope = azapi_resource.foundry_account.id }
     ci-candidate-reader        = { principal = azapi_resource.ci_candidate.output.properties.principalId, role = "reader", scope = azapi_resource.resource_group.id }
     ci-candidate-search-reader = { principal = azapi_resource.ci_candidate.output.properties.principalId, role = "search_index_data_reader", scope = azapi_resource.search.id }
     ci-candidate-la-reader     = { principal = azapi_resource.ci_candidate.output.properties.principalId, role = "log_analytics_reader", scope = azapi_resource.log_analytics.id }
