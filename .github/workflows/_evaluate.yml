@@ -75,16 +75,23 @@ jobs:
             --tag "${{ inputs.tag }}-v${{ steps.candidate.outputs.version }}" \
             --out evals/results/candidate
 
-      - name: Baseline metrics from last production release
+      - name: Baseline metrics for the current production version
         if: always()
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          PINNED: ${{ steps.prod.outputs.pinned_version }}
         run: |
-          run_id=$(gh run list --workflow release.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          if [ -n "$run_id" ]; then
-            gh run download "$run_id" --name eval-results-candidate --dir evals/results/baseline
-          fi
+          # The latest release is not necessarily production (demo reset re-pins an older
+          # version), so use the release artifact that evaluated the pinned version.
+          for run_id in $(gh run list --workflow release.yml --status success --limit 20 --json databaseId --jq '.[].databaseId'); do
+            rm -rf evals/results/baseline
+            gh run download "$run_id" --name eval-results-candidate --dir evals/results/baseline 2>/dev/null || continue
+            v=$(jq -r '.version' evals/results/baseline/candidate/results.json 2>/dev/null)
+            if [ "$v" = "$PINNED" ]; then echo "Baseline: release run $run_id (v$v)"; exit 0; fi
+          done
+          rm -rf evals/results/baseline
+          echo "No release artifact for production v$PINNED - gating without a baseline column."
 
       - name: Eval gate (fail closed)
         id: gate
