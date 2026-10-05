@@ -13,12 +13,12 @@ Push-Location $RepoRoot
 try {
     Assert-CleanTree
     Initialize-Gh
-    Invoke-Native git fetch origin main --quiet
-    Invoke-Native git switch -C $DemoBranch origin/main
+    Invoke-Git fetch origin main --quiet
+    Invoke-Git switch -C $DemoBranch origin/main
     Copy-Item demo/prompts/concise-break.md $PromptPath -Force
-    Invoke-Native git add $PromptPath
-    Invoke-Native git commit -m 'Make clinical answers more concise for clinicians on mobile' -m 'Feedback from the nursing pilot: answers are too long to read between patients. Ask the model for 2-3 sentence answers.' --quiet
-    Invoke-Native git push -u origin $DemoBranch --force --quiet
+    Invoke-Git add $PromptPath
+    Invoke-Git commit -m 'Make clinical answers more concise for clinicians on mobile' -m 'Feedback from the nursing pilot: answers are too long to read between patients. Ask the model for 2-3 sentence answers.' --quiet
+    Invoke-Git push -u origin $DemoBranch --force --quiet
     if (-not $NoPr) {
         gh label create demo --color FBCA04 --description 'Demo PRs closed by demo/reset.ps1' 2>$null | Out-Null
         $body = @'

@@ -27,15 +27,15 @@ try {
 
     Write-Host '2/4 Restoring baseline prompt on main' -ForegroundColor Cyan
     Assert-CleanTree
-    Invoke-Native git fetch origin main --tags --force --quiet
-    Invoke-Native git switch main --quiet
-    Invoke-Native git reset --hard origin/main --quiet
+    Invoke-Git fetch origin main --tags --force --quiet
+    Invoke-Git switch main --quiet
+    Invoke-Git reset --hard origin/main --quiet
     git branch -D $DemoBranch 2>$null | Out-Null
-    Invoke-Native git checkout demo-baseline -- $PromptPath
+    Invoke-Git checkout demo-baseline -- $PromptPath
     if (git status --porcelain -- $PromptPath) {
-        Invoke-Native git add $PromptPath
-        Invoke-Native git commit -m "[skip ci] demo reset: restore prompt $($baseline.prompt_version)" --quiet
-        Invoke-Native git push origin main --quiet
+        Invoke-Git add $PromptPath
+        Invoke-Git commit -m "[skip ci] demo reset: restore prompt $($baseline.prompt_version)" --quiet
+        Invoke-Git push origin main --quiet
     } else {
         Write-Host '   prompt already at baseline'
     }

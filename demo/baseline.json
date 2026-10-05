@@ -1,6 +1,6 @@
 {
   "agent_name": "clinical-agent",
-  "agent_version": "9",
+  "agent_version": "13",
   "prompt_version": "1.0.0",
   "note": "Production version the demo resets to. Update with demo/prep.ps1 -RecordBaseline after an intentional baseline change."
 }

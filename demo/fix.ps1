@@ -10,13 +10,13 @@
 Push-Location $RepoRoot
 try {
     Initialize-Gh
-    Invoke-Native git fetch origin $DemoBranch --quiet
-    Invoke-Native git switch $DemoBranch
-    Invoke-Native git reset --hard "origin/$DemoBranch" --quiet
+    Invoke-Git fetch origin $DemoBranch --quiet
+    Invoke-Git switch $DemoBranch
+    Invoke-Git reset --hard "origin/$DemoBranch" --quiet
     Copy-Item demo/prompts/concise-fix.md $PromptPath -Force
-    Invoke-Native git add $PromptPath
-    Invoke-Native git commit -m 'Concise format without dropping key facts' -m 'Lead with a one-sentence answer, then up to 5 cited bullets. Never omit key facts (causes, symptoms, treatment, when to seek care) to save space.' --quiet
-    Invoke-Native git push origin $DemoBranch --quiet
+    Invoke-Git add $PromptPath
+    Invoke-Git commit -m 'Concise format without dropping key facts' -m 'Lead with a one-sentence answer, then up to 5 cited bullets. Never omit key facts (causes, symptoms, treatment, when to seek care) to save space.' --quiet
+    Invoke-Git push origin $DemoBranch --quiet
     Write-Host "`nFix pushed. The eval gate re-runs on a new candidate version and should pass." -ForegroundColor Green
     Write-Host 'Then: merge the PR, approve the production deployment in the release run.'
 } finally { Pop-Location }

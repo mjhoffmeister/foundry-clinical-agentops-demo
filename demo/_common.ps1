@@ -5,9 +5,10 @@ $Script:DemoBranch = 'demo/concise-answers'
 $Script:PromptPath = 'agent/prompts/system.md'
 
 function Invoke-Native {
-    param([Parameter(Mandatory)][string]$File, [Parameter(ValueFromRemainingArguments)][string[]]$Rest)
-    & $File @Rest
-    if ($LASTEXITCODE -ne 0) { throw "$File $($Rest -join ' ') failed with exit code $LASTEXITCODE" }
+    # Uses $args (no param block) so native flags like -f / -C are never bound as PowerShell parameters.
+    $file, $rest = $args
+    & $file @rest
+    if ($LASTEXITCODE -ne 0) { throw "$file $($rest -join ' ') failed with exit code $LASTEXITCODE" }
 }
 
 function Import-AzdEnv {
@@ -24,10 +25,18 @@ function Import-AzdEnv {
 }
 
 function Initialize-Gh {
-    if (-not $env:GH_TOKEN) {
-        $user = if ($env:DEMO_GH_USER) { $env:DEMO_GH_USER } else { 'mjhoffmeister' }
-        $env:GH_TOKEN = (gh auth token -u $user)
-    }
+    # Pin gh AND git to the demo repo owner for this process, even if the shell already has a
+    # GH_TOKEN or a credential manager entry for another GitHub account.
+    $user = if ($env:DEMO_GH_USER) { $env:DEMO_GH_USER } else { 'mjhoffmeister' }
+    $token = gh auth token -u $user 2>$null
+    if ($LASTEXITCODE -eq 0 -and $token) { $env:GH_TOKEN = $token }
+    elseif (-not $env:GH_TOKEN) { throw "gh is not signed in as $user - run: gh auth login (or set DEMO_GH_USER)" }
+}
+
+function Invoke-Git {
+    # git with gh (GH_TOKEN from Initialize-Gh) as the only credential helper. `-c` is applied last, so it
+    # overrides credential-manager or IDE-injected helpers that may hold a different GitHub account.
+    Invoke-Native git -c credential.helper= -c 'credential.helper=!gh auth git-credential' @args
 }
 
 function Get-Baseline {

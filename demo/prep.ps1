@@ -31,7 +31,7 @@ try {
         [ordered]@{ agent_name = $env:AGENT_NAME; agent_version = $sel.pinned_version; prompt_version = $pv;
             note = 'Production version the demo resets to. Update with demo/prep.ps1 -RecordBaseline after an intentional baseline change.' } |
             ConvertTo-Json | Set-Content demo/baseline.json -Encoding utf8NoBOM
-        Invoke-Native git tag -f demo-baseline
+        Invoke-Git tag -f demo-baseline
         Write-Host "Recorded baseline v$($sel.pinned_version) / prompt $pv. Commit demo/baseline.json, then: git push -f origin demo-baseline" -ForegroundColor Yellow
     }
 
