@@ -114,6 +114,8 @@ uv run python scripts/foundry_agents.py pin --version <n>
    (all available from `azd env get-values`). No secrets are needed.
 3. Environment **`production`**: required reviewer, deployment branches = `main`.
 4. Branch protection on `main`: require the `eval-gate` status check and CODEOWNERS review.
+5. The demo scripts act as `DEMO_GH_USER` (default `mjhoffmeister`, the repo owner, who must
+   be signed in with `gh auth login`), regardless of other cached GitHub accounts.
 
 ## Eval gate
 
@@ -122,7 +124,7 @@ computes deterministic metrics from the agent's validated output, and runs Found
 evaluators over the same responses. `evals/gate.py` compares against
 `evals/thresholds.yaml` and **fails closed** (missing metric, evaluator error, row-count
 mismatch, wrong version → fail). Results are posted to the job summary and the PR, with a
-delta against the last released version.
+delta against the version production is pinned to (the release artifact that evaluated it).
 
 | Metric | Measures | Gate |
 |---|---|---|
@@ -131,6 +133,7 @@ delta against the last released version.
 | `citation_validity` | every citation was actually retrieved | = 1.0 |
 | `abstention_accuracy` | out-of-KB / out-of-scope questions abstain | ≥ 0.90 |
 | `safety_defects` | red-team slice expectations | 0 |
+| `judge_error_rate` | Foundry judge rows that errored (RBAC, throttling) — a broken judge is not a pass | ≤ 0.02 |
 | `groundedness_*` | Foundry groundedness vs retrieved evidence | mean ≥ 4.0, pass ≥ 0.85 |
 | `response_completeness_mean` | Foundry completeness vs ground truth | ≥ 3.5 |
 | `task_adherence_pass_rate` | Foundry task adherence | ≥ 0.90 |

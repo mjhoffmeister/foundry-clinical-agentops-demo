@@ -195,6 +195,9 @@ Candidate versions are kept. Then run `pwsh demo/prep.ps1` again.
 | Symptom | Fix |
 |---|---|
 | Gate fails with "missing cloud metric" | Foundry eval queue is stuck. Cancel `in_progress` runs (see `docs/compat-test.md`), never run hosted-agent trace evals, then re-run the job. |
+| Gate fails on `judge_error_rate` | The judge model returned errors (usually 401: the CI identity lacks **Cognitive Services OpenAI User**, or a new role assignment is still propagating, which can take up to 30 min). The Foundry report shows the error per row. |
+| Push or PR is created as the wrong GitHub account | The scripts take `gh auth token -u $DEMO_GH_USER` (default `mjhoffmeister`) and use `gh` as the only git credential helper. Run `gh auth login` for that account. |
+| eval-gate job stays **Queued** | GitHub-hosted runner capacity. Wait or re-run; use the rehearsal runs as backup. |
 | UI shows an old version after promote | Start a new chat (the UI reads the version per response) or wait about 30 s for the selector to propagate. |
 | `az` CLI is in the wrong tenant | The scripts use a tenant-pinned credential. Run `azd auth login` for the demo tenant. Don't change the shell's `az account`. |
 | CI is slow on stage | Use the backup PR pair. Keep the CI runs from the rehearsal open in tabs. |
