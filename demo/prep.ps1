@@ -6,6 +6,8 @@
   - Verifies production is on the baseline version and no demo PR is open
   - Smoke tests production
   - Seeds traffic so monitoring / traces have fresh data (-SkipSeed to skip)
+  - Points the continuous (trace) evaluation schedule at the baseline version and,
+    after seeding, starts one run
   - Prints the links used in the demo script
   -RecordBaseline pins nothing; it writes the CURRENT production version and
   prompt into demo/baseline.json and moves the demo-baseline tag to HEAD.
@@ -56,6 +58,14 @@ try {
         Write-Host 'Seeding traffic' -ForegroundColor Cyan
         Invoke-Tools demo/seed_traffic.py --rounds $Rounds
     }
+
+    # Trace evaluations match gen_ai.agent.id exactly (clinical-agent:<version>), so the
+    # schedule must follow the pinned version. After seeding, start one run so the Monitor
+    # tab has fresh continuous-evaluation results (~5 min, not awaited).
+    Write-Host 'Continuous evaluation' -ForegroundColor Cyan
+    $ceArgs = @('scripts/continuous_eval.py', '--mode', 'schedule', '--version', $baseline.agent_version)
+    if (-not $SkipSeed) { $ceArgs += '--run-now' }
+    Check 'Trace evaluation schedule' { Invoke-Tools @ceArgs | Select-Object -Last 1 }
 
     $sub = $env:AZURE_SUBSCRIPTION_ID
     Write-Host "`nLinks" -ForegroundColor Cyan

@@ -143,11 +143,21 @@ delta against the version production is pinned to (the release artifact that eva
 
 - `scheduled-eval.yml` — weekly (and on demand) runs the full suite against the pinned
   production version, so drift in model, index or guardrails is caught with no code change.
-- Foundry *evaluation rules* (continuous evaluation on live traffic) do not currently support
-  hosted agents. `scripts/continuous_eval.py` still tries them (`--mode rule`) so the demo
-  picks them up when support lands. **Do not use `--mode schedule`**: hosted-agent trace
-  evaluations stayed `in_progress` indefinitely and blocked every other quality evaluation in
-  the project, which made the CI gate fail closed. `--mode off` removes any rule/schedule.
+- `scripts/continuous_eval.py` (default `--mode schedule`) creates a Foundry **scheduled trace
+  evaluation** of live production traffic. It runs every 6 h over the last 24 h of traces for
+  `clinical-agent:<pinned version>`, scoring intent resolution, coherence, groundedness and
+  content safety. Results appear on the agent's **Monitor** tab and under **Evaluations**
+  (`clinical-agent - continuous (production traces)`). `demo/prep.ps1` re-points the schedule
+  at the baseline version and starts a run; run it with `--version N` after promoting a new
+  version. `--run-now --wait` runs one immediately; `--mode off` removes it.
+  - The project identity needs **Reader on App Insights** (`infra/rbac.tf`); without it,
+    trace runs fail or hang and can block other evaluations in the project.
+  - Trace evaluation filters on the exact `gen_ai.agent.id`, so the version is required.
+  - `task_adherence` is excluded on traces: the platform span lacks the hosted agent's
+    knowledge-base tool calls, so the judge reports false "no tool call" failures. The CI
+    gate still enforces it.
+- Per-response Foundry *evaluation rules* do not support hosted agents yet. `--mode rule`
+  shows the service rejection.
 - Every production response is still traced (App Insights + Foundry Traces) with
   `clinical.*` attributes (evidence status, citations, guardrail blocks, prompt version),
   which feed the monitoring dashboard.

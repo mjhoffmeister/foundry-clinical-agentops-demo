@@ -104,9 +104,11 @@ Use the sample buttons in the UI. Each answer shows:
 
    The **deterministic** graders (facts, sources, citations, red-team expectations) sit next to **LLM judges**. Judges are lenient on short answers, and the deterministic metrics catch that.
 3. **Continuous:**
-   - `scheduled-eval.yml` re-runs the full suite against production weekly and on demand. It catches drift from model, index or guardrail changes with no code change.
+   - Agent **Monitor** tab: open the **continuous evaluation** results. This is a scheduled trace evaluation that runs every 6 hours over the last 24 hours of real production conversations. It scores groundedness, intent resolution, coherence and content safety, with no test dataset. `prep.ps1` started a fresh run.
+   - Open the run under **Evaluations** → `clinical-agent - continuous (production traces)`. Click a failed row: it is usually an `intent_resolution` miss on a question the agent correctly refused (out of scope). **Say:** "The judge is strict. A refusal counts as 'intent not resolved'. That's why we review the scores, not just alert on them."
+   - `scheduled-eval.yml` re-runs the full gated suite against production weekly and on demand. It catches drift from model, index or guardrail changes with no code change.
    - **Monitoring** dashboard: request volume, tokens, latency, errors and eval scores over time.
-4. **Be candid:** Foundry evaluation *rules* (live-traffic sampling) don't support hosted agents yet. The scheduled suite is the workaround until they do.
+4. **Be candid:** per-response evaluation *rules* don't support hosted agents yet, so we sample traces on a schedule instead. Task adherence is scored in CI rather than on traces, because the platform trace doesn't include the hosted agent's knowledge-base tool calls.
 
 ## 5. Break: a well-meant change (10 min) — tabs 7 and 8
 
@@ -194,7 +196,7 @@ Candidate versions are kept. Then run `pwsh demo/prep.ps1` again.
 
 | Symptom | Fix |
 |---|---|
-| Gate fails with "missing cloud metric" | Foundry eval queue is stuck. Cancel `in_progress` runs (see `docs/compat-test.md`), never run hosted-agent trace evals, then re-run the job. |
+| Gate fails with "missing cloud metric" | Foundry eval queue is stuck. Cancel `in_progress` runs (see `docs/compat-test.md`). If a trace-eval run is stuck, also run `scripts/continuous_eval.py --mode off`. Then re-run the job. |
 | Gate fails on `judge_error_rate` | The judge model returned errors (usually 401: the CI identity lacks **Cognitive Services OpenAI User**, or a new role assignment is still propagating, which can take up to 30 min). The Foundry report shows the error per row. |
 | Push or PR is created as the wrong GitHub account | The scripts take `gh auth token -u $DEMO_GH_USER` (default `mjhoffmeister`) and use `gh` as the only git credential helper. Run `gh auth login` for that account. |
 | eval-gate job stays **Queued** | GitHub-hosted runner capacity. Wait or re-run; use the rehearsal runs as backup. |

@@ -21,8 +21,11 @@ locals {
     search-cs-user     = { principal = azapi_resource.search.identity[0].principal_id, role = "cognitive_services_user", scope = azapi_resource.foundry_account.id }
     search-openai-user = { principal = azapi_resource.search.identity[0].principal_id, role = "cognitive_services_openai_user", scope = azapi_resource.foundry_account.id }
 
-    # Project identity: cloud evaluations (judge model) + reading traces for continuous eval.
+    # Project identity: cloud evaluations (judge model) + reading traces for scheduled trace
+    # evaluation. Reader on App Insights is required; without it trace runs fail/hang.
     project-cs-user        = { principal = azapi_resource.project.identity[0].principal_id, role = "cognitive_services_user", scope = azapi_resource.foundry_account.id }
+    project-ai-user        = { principal = azapi_resource.project.identity[0].principal_id, role = "azure_ai_user", scope = azapi_resource.foundry_account.id }
+    project-appi-reader    = { principal = azapi_resource.project.identity[0].principal_id, role = "reader", scope = azapi_resource.app_insights.id }
     project-appi-la-reader = { principal = azapi_resource.project.identity[0].principal_id, role = "log_analytics_reader", scope = azapi_resource.app_insights.id }
     project-appi-priv-mon  = { principal = azapi_resource.project.identity[0].principal_id, role = "privileged_monitoring_data_reader", scope = azapi_resource.app_insights.id }
     project-law-la-reader  = { principal = azapi_resource.project.identity[0].principal_id, role = "log_analytics_reader", scope = azapi_resource.log_analytics.id }
