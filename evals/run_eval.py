@@ -285,6 +285,19 @@ def _errored(r: dict) -> bool:
     return r.get("score") is None and r.get("passed") is None and bool(sample.get("error"))
 
 
+def _usage(run) -> dict:
+    """Evaluation token usage for one cloud run, by model.
+
+    The service also reports an aggregate `azure_ai_evaluation` row that repeats the
+    per-model totals, so it is dropped here - summing every row double-counts the run.
+    Safety evaluators bill against the Microsoft-hosted safety service
+    (`azure_ai_system_model`); quality evaluators bill the judge deployment.
+    """
+    per_model = {u.model_name: u.total_tokens for u in (getattr(run, "per_model_usage", None) or [])
+                 if u.model_name != "azure_ai_evaluation"}
+    return {"total_tokens": sum(per_model.values()), "by_model": per_model}
+
+
 def cloud_eval(rows: list[dict], tag: str, version: str) -> dict:
     from azure.ai.projects import AIProjectClient
 
@@ -319,7 +332,7 @@ def cloud_eval(rows: list[dict], tag: str, version: str) -> dict:
     safety_criteria = [_criterion(n, n, qr, None) for n in SAFETY_EVALUATORS]
     props = {"agent_version": str(version), "git_sha": os.environ.get("GITHUB_SHA", "local")[:12], "tag": tag}
 
-    out: dict[str, Any] = {"report_urls": {}, "metrics": {}}
+    out: dict[str, Any] = {"report_urls": {}, "metrics": {}, "usage": {}}
     with (
         AIProjectClient(endpoint=fa.project_endpoint(), credential=_credential) as project,
         project.get_openai_client(max_retries=8) as client,
@@ -333,10 +346,12 @@ def cloud_eval(rows: list[dict], tag: str, version: str) -> dict:
         for kind, (ev, run) in jobs.items():
             run = _wait(client, ev, run)
             out["report_urls"][kind] = getattr(run, "report_url", None)
+            out["usage"][kind] = _usage(run)
             if run.status != "completed":
                 out.setdefault("errors", []).append(f"{kind} run {run.status}: {getattr(run, 'error', None)}")
                 continue
             scores.update(_scores(client, ev, run))
+    out["usage"]["total_tokens"] = sum(u["total_tokens"] for u in out["usage"].values() if isinstance(u, dict))
 
     def score_mean(name: str) -> float | None:
         vals = [float(r["score"]) for r in scores.get(name, []) if r.get("score") is not None]
@@ -348,13 +363,18 @@ def cloud_eval(rows: list[dict], tag: str, version: str) -> dict:
 
     safety_results = [r for n in SAFETY_EVALUATORS for r in scores.get(n, [])]
     judged = [r for n in ("groundedness", "response_completeness", "task_adherence") for r in scores.get(n, [])]
+    # An errored evaluator row has passed=None, so counting it as a "defect" would report a
+    # throttled or unauthorized safety service as a content-safety violation. Errors are gated
+    # separately by judge_error_rate (still fail-closed) and excluded from the defect count.
+    cloud_rows = judged + safety_results
     out["metrics"] = {
-        "judge_error_rate": round(sum(_errored(r) for r in judged) / len(judged), 4) if judged else None,
+        "judge_error_rate": round(sum(_errored(r) for r in cloud_rows) / len(cloud_rows), 4) if cloud_rows else None,
         "groundedness_mean": score_mean("groundedness"),
         "groundedness_pass_rate": pass_rate("groundedness"),
         "response_completeness_mean": score_mean("response_completeness"),
         "task_adherence_pass_rate": pass_rate("task_adherence"),
-        "content_safety_defects": sum(not _passed(r) for r in safety_results) if safety_results else None,
+        "content_safety_defects": sum(not _passed(r) for r in safety_results if not _errored(r))
+        if safety_results else None,
     }
     out["per_item"] = {
         name: [{k: r.get(k) for k in ("score", "label", "reason", "passed")} for r in vals]
@@ -381,6 +401,11 @@ def summary_markdown(result: dict) -> str:
     for kind, url in ((result.get("cloud") or {}).get("report_urls") or {}).items():
         if url:
             lines.append(f"\n[Foundry {kind} evaluation report]({url})")
+    usage = (result.get("cloud") or {}).get("usage") or {}
+    if usage.get("total_tokens"):
+        by_run = ", ".join(f"{k} {v['total_tokens']:,}" for k, v in usage.items()
+                           if isinstance(v, dict) and v.get("total_tokens"))
+        lines.append(f"\nEvaluation tokens: **{usage['total_tokens']:,}** ({by_run})")
     fails = [r for r in result["rows"] if r.get("error") or not _row_ok(r)]
     if fails:
         lines += ["", "<details><summary>Row-level failures</summary>", "", "| id | category | issue |", "|---|---|---|"]

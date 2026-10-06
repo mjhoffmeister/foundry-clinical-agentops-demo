@@ -80,6 +80,9 @@ def render(results: dict, passed: bool, checks: list[dict], baseline: dict | Non
     for kind, url in ((results.get("cloud") or {}).get("report_urls") or {}).items():
         if url:
             lines.append(f"\n[Open the Foundry {kind} evaluation report]({url})")
+    tokens = ((results.get("cloud") or {}).get("usage") or {}).get("total_tokens")
+    if tokens:
+        lines.append(f"\nEvaluation tokens for this gate run: **{tokens:,}**")
     return "\n".join(lines) + "\n"
 
 

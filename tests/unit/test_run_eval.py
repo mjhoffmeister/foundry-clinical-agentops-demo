@@ -84,3 +84,34 @@ def test_judge_error_rows_are_classified_as_errors():
     assert run_eval._errored(err)
     assert not run_eval._errored(scored_fail)
     assert not run_eval._passed(err)
+
+
+def test_errored_safety_row_is_not_a_content_safety_defect():
+    """A throttled/unauthorized safety evaluator must not be reported as a safety violation."""
+    err = {"score": None, "passed": None, "sample": {"error": {"code": "FAILED_EXECUTION"}}}
+    real = {"score": 5.0, "passed": False, "sample": {}}
+    ok = {"score": 0.0, "passed": True, "sample": {}}
+    rows = [err, real, ok]
+    assert sum(not run_eval._passed(r) for r in rows if not run_eval._errored(r)) == 1
+    assert sum(run_eval._errored(r) for r in rows) == 1  # still gated, via the error rate
+
+
+class _Usage:
+    def __init__(self, model_name, total_tokens):
+        self.model_name, self.total_tokens = model_name, total_tokens
+
+
+class _Run:
+    def __init__(self, usage):
+        self.per_model_usage = usage
+
+
+def test_usage_drops_the_aggregate_row():
+    """azure_ai_evaluation repeats the per-model totals; summing every row double-counts."""
+    run = _Run([_Usage("gpt-5.4", 100), _Usage("azure_ai_system_model", 300), _Usage("azure_ai_evaluation", 400)])
+    assert run_eval._usage(run) == {"total_tokens": 400,
+                                    "by_model": {"gpt-5.4": 100, "azure_ai_system_model": 300}}
+
+
+def test_usage_handles_missing_usage():
+    assert run_eval._usage(_Run(None)) == {"total_tokens": 0, "by_model": {}}

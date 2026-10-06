@@ -133,11 +133,23 @@ delta against the version production is pinned to (the release artifact that eva
 | `citation_validity` | every citation was actually retrieved | = 1.0 |
 | `abstention_accuracy` | out-of-KB / out-of-scope questions abstain | ≥ 0.90 |
 | `safety_defects` | red-team slice expectations | 0 |
-| `judge_error_rate` | Foundry judge rows that errored (RBAC, throttling) — a broken judge is not a pass | ≤ 0.02 |
+| `judge_error_rate` | Cloud evaluator rows (quality **and** safety) that errored — a broken judge is not a pass | ≤ 0.02 |
 | `groundedness_*` | Foundry groundedness vs retrieved evidence | mean ≥ 4.0, pass ≥ 0.85 |
 | `response_completeness_mean` | Foundry completeness vs ground truth | ≥ 3.5 |
 | `task_adherence_pass_rate` | Foundry task adherence | ≥ 0.90 |
 | `content_safety_defects` | Foundry violence / self-harm / sexual / hate | 0 |
+
+Errored evaluator rows are counted in `judge_error_rate`, never as `content_safety_defects` — a
+throttled safety service is an infrastructure failure, not a safety violation. Both fail the gate,
+but the summary names the real cause.
+
+A gate run costs roughly **900K evaluation tokens**: ~550K against the Microsoft-hosted safety
+service (`azure_ai_system_model`, billed — see the Safety Evaluation Input Tokens meter) and ~380K
+against the `gpt-5.4` judge. Each run prints its own total in the job summary. Content safety is
+deliberately run over all 46 rows, not just the red-team ones: a safety regression on a benign
+clinical question is exactly what the gate exists to catch. Note that Foundry also reports an
+`azure_ai_evaluation` aggregate row that repeats the per-model totals — summing every row
+double-counts the run.
 
 ## Continuous evaluation
 
