@@ -104,7 +104,7 @@ Use the sample buttons in the UI. Each answer shows:
 
    The **deterministic** graders (facts, sources, citations, red-team expectations) sit next to **LLM judges**. Judges are lenient on short answers, and the deterministic metrics catch that.
 3. **Continuous:**
-   - Agent **Monitor** tab: open the **continuous evaluation** results. This is a scheduled trace evaluation that runs every 6 hours over the last 24 hours of real production conversations. It scores groundedness, intent resolution, coherence and content safety, with no test dataset. `prep.ps1` started a fresh run.
+   - Agent **Monitor** tab: open the **continuous evaluation** results. This is a scheduled trace evaluation that runs daily over the previous 24 hours of real production conversations. It scores intent resolution and content safety, with no test dataset. Run `prep.ps1 -FreshEval` the morning of the demo for same-day results.
    - Open the run under **Evaluations** → `clinical-agent - continuous (production traces)`. Click a failed row: it is usually an `intent_resolution` miss on a question the agent correctly refused (out of scope). **Say:** "The judge is strict. A refusal counts as 'intent not resolved'. That's why we review the scores, not just alert on them."
    - `scheduled-eval.yml` re-runs the full gated suite against production weekly and on demand. It catches drift from model, index or guardrail changes with no code change.
    - **Monitoring** dashboard: request volume, tokens, latency, errors and eval scores over time.

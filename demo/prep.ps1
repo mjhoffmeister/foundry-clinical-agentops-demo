@@ -6,13 +6,13 @@
   - Verifies production is on the baseline version and no demo PR is open
   - Smoke tests production
   - Seeds traffic so monitoring / traces have fresh data (-SkipSeed to skip)
-  - Points the continuous (trace) evaluation schedule at the baseline version and,
-    after seeding, starts one run
+  - Points the daily continuous (trace) evaluation schedule at the baseline version
+    (-FreshEval also starts one run now)
   - Prints the links used in the demo script
   -RecordBaseline pins nothing; it writes the CURRENT production version and
   prompt into demo/baseline.json and moves the demo-baseline tag to HEAD.
 #>
-param([switch]$SkipSeed, [switch]$RecordBaseline, [int]$Rounds = 1)
+param([switch]$SkipSeed, [switch]$RecordBaseline, [switch]$FreshEval, [int]$Rounds = 1)
 . "$PSScriptRoot/_common.ps1"
 Push-Location $RepoRoot
 try {
@@ -60,11 +60,11 @@ try {
     }
 
     # Trace evaluations match gen_ai.agent.id exactly (clinical-agent:<version>), so the
-    # schedule must follow the pinned version. After seeding, start one run so the Monitor
-    # tab has fresh continuous-evaluation results (~5 min, not awaited).
+    # schedule must follow the pinned version. No-op (and no extra run) when unchanged.
+    # -FreshEval starts one run now (~5 min, ~350K evaluation tokens) for same-day results.
     Write-Host 'Continuous evaluation' -ForegroundColor Cyan
     $ceArgs = @('scripts/continuous_eval.py', '--mode', 'schedule', '--version', $baseline.agent_version)
-    if (-not $SkipSeed) { $ceArgs += '--run-now' }
+    if ($FreshEval) { $ceArgs += '--run-now' }
     Check 'Trace evaluation schedule' { Invoke-Tools @ceArgs | Select-Object -Last 1 }
 
     $sub = $env:AZURE_SUBSCRIPTION_ID

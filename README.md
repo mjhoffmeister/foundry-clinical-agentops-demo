@@ -144,18 +144,27 @@ delta against the version production is pinned to (the release artifact that eva
 - `scheduled-eval.yml` — weekly (and on demand) runs the full suite against the pinned
   production version, so drift in model, index or guardrails is caught with no code change.
 - `scripts/continuous_eval.py` (default `--mode schedule`) creates a Foundry **scheduled trace
-  evaluation** of live production traffic. It runs every 6 h over the last 24 h of traces for
-  `clinical-agent:<pinned version>`, scoring intent resolution, coherence, groundedness and
-  content safety. Results appear on the agent's **Monitor** tab and under **Evaluations**
-  (`clinical-agent - continuous (production traces)`). `demo/prep.ps1` re-points the schedule
-  at the baseline version and starts a run; run it with `--version N` after promoting a new
-  version. `--run-now --wait` runs one immediately; `--mode off` removes it.
+  evaluation** of live production traffic. It runs daily at 11:00 UTC over the previous 24 h
+  (up to 10 traces) for `clinical-agent:<pinned version>`, scoring intent resolution and
+  content safety (violence, self-harm, hate/unfairness). Results appear on the agent's
+  **Monitor** tab and under **Evaluations** (`clinical-agent - continuous (production traces)`).
+  `demo/prep.ps1` re-points the schedule at the baseline version (`-FreshEval` also starts a
+  run); run it with `--version N` after promoting a new version. `--run-now --wait` runs one
+  immediately; `--mode off` removes it.
   - The project identity needs **Reader on App Insights** (`infra/rbac.tf`); without it,
     trace runs fail or hang and can block other evaluations in the project.
   - Trace evaluation filters on the exact `gen_ai.agent.id`, so the version is required.
-  - `task_adherence` is excluded on traces: the platform span lacks the hosted agent's
-    knowledge-base tool calls, so the judge reports false "no tool call" failures. The CI
-    gate still enforces it.
+  - The platform span has the prompt and final answer but not the hosted agent's
+    knowledge-base tool calls or retrieved passages. So `task_adherence` (false "no tool
+    call" failures) and groundedness (nothing to ground against) are enforced by the CI gate
+    instead.
+  - **Token cost:** about 35K evaluation tokens per trace, so about 350K per daily run. Each
+    trace yields 1–3 items (tool-call turns show up with an empty response), every item
+    carries the ~1K-token system prompt, and about 90% of the tokens go to the
+    Microsoft-hosted content-safety evaluators. Your judge deployment carries about 10%.
+    Every schedule update with a start time of "now" fires an immediate run, so the script
+    always sets a future start time and skips unchanged configurations. Tune with
+    `--max-traces` / `--every-hours`.
 - Per-response Foundry *evaluation rules* do not support hosted agents yet. `--mode rule`
   shows the service rejection.
 - Every production response is still traced (App Insights + Foundry Traces) with
