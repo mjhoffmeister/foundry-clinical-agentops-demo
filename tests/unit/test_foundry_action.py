@@ -83,6 +83,15 @@ RUN = {
     ],
 }
 
+def test_installed_sdk_supports_evaluator_version_operations():
+    with action.AIProjectClient(
+        endpoint="https://example.test/api/projects/demo",
+        credential=SimpleNamespace(get_token=lambda *args, **kwargs: None),
+    ) as project:
+        assert callable(project.evaluators.get_version)
+        assert callable(project.evaluators.create_version)
+
+
 
 @pytest.mark.parametrize("metric", graders.CODE_METRICS)
 @pytest.mark.parametrize("row,body,meta", [
