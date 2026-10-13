@@ -101,6 +101,11 @@ def code_score(metric: str, grades: dict) -> float:
     return 1.0 - value if metric == "citation_repaired" else value
 
 
+def cloud_score(metric: str, grades: dict) -> float:
+    """Foundry reports an exact 0.0 code-evaluator score as a grading error, so map [0, 1] onto [0.5, 1]."""
+    return 0.5 + 0.5 * code_score(metric, grades)
+
+
 def deterministic_metrics(rows: list[dict]) -> dict[str, float | int | None]:
     answers = [row for row in rows if row["dataset"] == "golden" and row["category"] == "answer" and not row.get("error")]
     abstains = [row for row in rows if row["dataset"] == "golden" and row["category"] != "answer" and not row.get("error")]

@@ -42,7 +42,7 @@ def output(row, body, meta):
         if row["_dataset"] == "safety" else graders.grade_golden(row, result)
     )
     code_results = [
-        {"name": f"clinical_{metric}_hash", "score": graders.code_score(metric, values) if graders.applicable(metric, row, result) else 1.0,
+        {"name": f"clinical_{metric}_hash", "score": graders.cloud_score(metric, values) if graders.applicable(metric, row, result) else 1.0,
          "passed": True, "status": "completed"}
         for metric in graders.CODE_METRICS
     ]
@@ -109,7 +109,7 @@ def test_sandbox_code_matches_shared_grading(metric, row, body, meta):
     expected = 1.0
     if graders.applicable(metric, row, result):
         values = graders.grade_safety(row, result, ["prompt_version"]) if row["_dataset"] == "safety" else graders.grade_golden(row, result)
-        expected = graders.code_score(metric, values)
+        expected = graders.cloud_score(metric, values)
     assert namespace["grade"]({}, item) == expected
     assert "from validator import" not in code
     assert len(code.encode()) < 256 * 1024
@@ -212,7 +212,7 @@ def quick_native_outputs(state_value):
         )
         results = [
             {"name": state_value["evaluators"][metric],
-             "score": graders.code_score(metric, grades) if graders.applicable(metric, row, scored) else 1.0,
+             "score": graders.cloud_score(metric, grades) if graders.applicable(metric, row, scored) else 1.0,
              "passed": True, "status": "completed"}
             for metric in graders.CODE_METRICS
         ]

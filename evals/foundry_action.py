@@ -118,7 +118,7 @@ def evaluator_code(metric: str) -> str:
         ):
             nodes.append(node)
         elif isinstance(node, ast.FunctionDef) and node.name in (
-            "grade_golden", "grade_safety", "_without_declines", "applicable", "code_score",
+            "grade_golden", "grade_safety", "_without_declines", "applicable", "code_score", "cloud_score",
         ):
             nodes.append(node)
     source = "from __future__ import annotations\nimport json\nimport re\n" + ast.unparse(
@@ -141,7 +141,7 @@ def grade(sample, item) -> float:
     if not applicable({metric!r}, item, result):
         return 1.0
     values = grade_safety(item, result, item["_fingerprints"]) if item["_dataset"] == "safety" else grade_golden(item, result)
-    return code_score({metric!r}, values)
+    return cloud_score({metric!r}, values)
 """
     code = source + wrapper
     compile(code, f"<clinical {metric}>", "exec")
@@ -474,7 +474,7 @@ def normalize(state: dict, outputs: list[dict], run: dict) -> dict:
                 value = scored.get("score")
                 if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 1:
                     raise ActionContractError(f"Row {row_id} has an invalid {metric} code-evaluator score")
-                if not math.isclose(value, graders.code_score(metric, res["grades"]), abs_tol=1e-8):
+                if not math.isclose(value, graders.cloud_score(metric, res["grades"]), abs_tol=1e-8):
                     raise ActionContractError(f"Row {row_id} cloud/local {metric} grading does not agree")
         if body:
             applicable_cloud = (
