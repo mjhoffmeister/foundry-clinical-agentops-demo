@@ -195,7 +195,18 @@ def test_quick_cli_fails_cleanly_when_cloud_results_are_malformed(tmp_path):
     assert gate.main([str(result_path), "--profile", "quick"]) == 1
 
 
-def test_quick_thresholds_leave_all_deterministic_requirements_unchanged():
+def test_quick_gate_allows_one_answer_rate_miss_but_keeps_facts_recall_strict():
+    value = quick_results()
+    value["deterministic"].update(source_hit_rate=0.8, answer_rate=0.8, required_facts_recall=0.75)
+    value["cloud"]["metrics"]["groundedness_pass_rate"] = 0.8
     full = yaml.safe_load((gate.ROOT / "evals" / "thresholds.yaml").read_text(encoding="utf-8"))
     quick = profiles.thresholds_for(full, "quick")
-    assert quick["deterministic"] == full["deterministic"]
+    passed, checks = gate.evaluate(value, quick, rows_expected=12)
+    assert not passed
+    assert [check["metric"] for check in checks if not check["ok"]] == ["required_facts_recall"]
+
+
+def test_full_profile_thresholds_remain_unchanged():
+    full = yaml.safe_load((gate.ROOT / "evals" / "thresholds.yaml").read_text(encoding="utf-8"))
+    assert profiles.thresholds_for(full, "full") == full
+    assert profiles.thresholds_for(full, "full")["deterministic"] == full["deterministic"]

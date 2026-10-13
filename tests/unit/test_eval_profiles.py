@@ -55,21 +55,49 @@ def test_builtin_evaluators_preserve_full_and_reduce_quick():
     assert profiles.BUILTIN_EVALUATORS["quick"] == ("groundedness", "response_completeness")
 
 
-def test_quick_thresholds_keep_deterministic_rules_and_only_required_cloud_rules():
+def test_quick_thresholds_override_only_small_sample_binary_rates():
     thresholds = yaml.safe_load((ROOT / "evals" / "thresholds.yaml").read_text())
     quick = profiles.thresholds_for(thresholds, "quick")
     assert quick["max_error_rate"] == thresholds["max_error_rate"]
-    assert quick["deterministic"] == thresholds["deterministic"]
+    assert quick["deterministic"]["source_hit_rate"] == {"min": 0.8}
+    assert quick["deterministic"]["answer_rate"] == {"min": 0.8}
+    assert quick["deterministic"]["required_facts_recall"] == {"min": 0.9}
+    assert {
+        key: value for key, value in quick["deterministic"].items()
+        if key not in profiles.QUICK_THRESHOLD_OVERRIDE_KEYS["deterministic"]
+    } == {
+        key: value for key, value in thresholds["deterministic"].items()
+        if key not in profiles.QUICK_THRESHOLD_OVERRIDE_KEYS["deterministic"]
+    }
     assert tuple(quick["cloud"]) == profiles.QUICK_CLOUD_METRICS
-    assert quick["cloud"] == {key: thresholds["cloud"][key] for key in profiles.QUICK_CLOUD_METRICS}
+    assert quick["cloud"]["groundedness_pass_rate"] == {"min": 0.8}
+    assert {
+        key: value for key, value in quick["cloud"].items()
+        if key not in profiles.QUICK_THRESHOLD_OVERRIDE_KEYS["cloud"]
+    } == {key: thresholds["cloud"][key] for key in profiles.QUICK_CLOUD_METRICS
+          if key not in profiles.QUICK_THRESHOLD_OVERRIDE_KEYS["cloud"]}
     assert profiles.thresholds_for(thresholds, "full") == thresholds
 
 
 def test_quick_thresholds_require_all_selected_cloud_metrics():
+    thresholds = yaml.safe_load((ROOT / "evals" / "thresholds.yaml").read_text())
+    thresholds["cloud"] = {}
     with pytest.raises(profiles.ProfileError, match="missing"):
-        profiles.thresholds_for({"max_error_rate": 0.05, "deterministic": {}, "cloud": {}}, "quick")
+        profiles.thresholds_for(thresholds, "quick")
     with pytest.raises(profiles.ProfileError, match="max_error_rate"):
         profiles.thresholds_for({"deterministic": {}, "cloud": {"judge_error_rate": {}}}, "quick")
+
+
+def test_quick_thresholds_reject_missing_or_unapproved_overrides():
+    thresholds = yaml.safe_load((ROOT / "evals" / "thresholds.yaml").read_text())
+    thresholds["quick_overrides"]["deterministic"].pop("answer_rate")
+    with pytest.raises(profiles.ProfileError, match="exactly"):
+        profiles.thresholds_for(thresholds, "quick")
+
+    thresholds = yaml.safe_load((ROOT / "evals" / "thresholds.yaml").read_text())
+    thresholds["quick_overrides"]["deterministic"]["required_facts_recall"] = {"min": 0.75}
+    with pytest.raises(profiles.ProfileError, match="exactly"):
+        profiles.thresholds_for(thresholds, "quick")
 
 
 def test_quick_result_identity_requires_exact_rows_and_categories():

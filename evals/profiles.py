@@ -19,6 +19,10 @@ QUICK_CLOUD_METRICS = (
     "groundedness_pass_rate",
     "response_completeness_mean",
 )
+QUICK_THRESHOLD_OVERRIDE_KEYS = {
+    "deterministic": {"source_hit_rate", "answer_rate"},
+    "cloud": {"groundedness_pass_rate"},
+}
 QUICK_ROW_IDENTITY = {
     "g01": ("golden", "answer"),
     "g04": ("golden", "answer"),
@@ -77,10 +81,25 @@ def thresholds_for(thresholds: dict, profile: str) -> dict:
     missing = sorted(required - cloud.keys())
     if missing:
         raise ProfileError(f"Quick profile thresholds are missing required metrics: {missing}")
+    quick_overrides = thresholds.get("quick_overrides")
+    if not isinstance(quick_overrides, dict):
+        raise ProfileError("Thresholds must define quick_overrides")
+    for section, allowed_keys in QUICK_THRESHOLD_OVERRIDE_KEYS.items():
+        section_overrides = quick_overrides.get(section)
+        if not isinstance(section_overrides, dict) or section_overrides.keys() != allowed_keys:
+            raise ProfileError(f"Quick profile {section} overrides must define exactly {sorted(allowed_keys)}")
+        source = deterministic if section == "deterministic" else cloud
+        if not allowed_keys <= source.keys():
+            raise ProfileError(f"Quick profile {section} overrides reference missing base thresholds")
+
+    quick_deterministic = deepcopy(deterministic)
+    quick_deterministic.update(deepcopy(quick_overrides["deterministic"]))
+    quick_cloud = {name: deepcopy(cloud[name]) for name in QUICK_CLOUD_METRICS}
+    quick_cloud.update(deepcopy(quick_overrides["cloud"]))
     return {
         "max_error_rate": thresholds.get("max_error_rate", 0.05),
-        "deterministic": deepcopy(deterministic),
-        "cloud": {name: deepcopy(cloud[name]) for name in QUICK_CLOUD_METRICS},
+        "deterministic": quick_deterministic,
+        "cloud": quick_cloud,
     }
 
 

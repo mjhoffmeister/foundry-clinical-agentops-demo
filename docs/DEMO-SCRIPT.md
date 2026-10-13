@@ -168,6 +168,12 @@ This opens the PR **"Shorter answers for mobile clinicians"**. The prompt change
   5. **Collect candidate results** verifies the exact profile rows, dataset and agent version.
   6. **Quick demo evaluation** applies the deterministic clinical and selected cloud thresholds. The report prominently says **“Demo evaluation - not release approval.”**
 
+  The quick suite has five answer rows, so its `source_hit_rate`,
+  `answer_rate`, and `groundedness_pass_rate` thresholds are each **0.80**
+  (one miss out of five). `required_facts_recall` remains **0.90**: a quick
+  run still fails when answers omit too many required clinical facts. All
+  other quick thresholds and every full-release threshold are unchanged.
+
   **Say:** "This quick profile makes the PR regression easier to demonstrate.
   A green quick check is only this demo check: merging still reruns the full
   release evaluation, and approval is separate. Production has not moved."
