@@ -165,8 +165,9 @@ def test_quick_preparation_uses_curated_rows_and_reduced_native_judges(tmp_path,
     assert state_value["release_eligible"] is False
     assert state_value["builtin_evaluators"] == ["groundedness", "response_completeness"]
     assert action.validate_state(state_value) == "quick"
+    assert set(config["evaluator_parameters"]) == set(config["evaluators"])
+    assert all(params["deployment_name"] for params in config["evaluator_parameters"].values())
     assert all(set(row) == set(config["data"][0]) for row in config["data"])
-
 
 def test_quick_preparation_rejects_limit_before_cloud_client_creation(tmp_path, monkeypatch):
     with pytest.raises(action.ActionContractError, match="cannot be combined"):

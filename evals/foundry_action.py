@@ -240,7 +240,8 @@ def prepare(
         "name": tag,
         "evaluators": [*(f"builtin.{metric}" for metric in builtin_evaluators), *names.values()],
         "evaluator_parameters": {
-            name: {"deployment_name": judge, "pass_threshold": 1.0} for name in names.values()
+            **{f"builtin.{metric}": {"deployment_name": judge} for metric in builtin_evaluators},
+            **{name: {"deployment_name": judge, "pass_threshold": 1.0} for name in names.values()},
         },
         "data": data,
     }
