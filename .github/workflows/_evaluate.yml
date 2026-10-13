@@ -11,6 +11,11 @@ on:
         description: label used for the Foundry evaluation names
         type: string
         required: true
+      profile:
+        description: full release gate or quick non-promoting demo evaluation
+        type: string
+        required: false
+        default: full
     outputs:
       candidate_version:
         value: ${{ jobs.evaluate.outputs.candidate_version }}
@@ -18,6 +23,10 @@ on:
         value: ${{ jobs.evaluate.outputs.prod_version_before }}
       gate:
         value: ${{ jobs.evaluate.outputs.gate }}
+      evaluation_profile:
+        value: ${{ jobs.evaluate.outputs.evaluation_profile }}
+      evaluation_result:
+        value: ${{ jobs.evaluate.outputs.evaluation_result }}
 
 permissions:
   contents: read
@@ -39,17 +48,32 @@ jobs:
   evaluate:
     name: deploy candidate + eval gate
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     outputs:
       candidate_version: ${{ steps.candidate.outputs.version }}
       prod_version_before: ${{ steps.prod.outputs.pinned_version }}
       gate: ${{ steps.gate.outputs.result }}
+      evaluation_profile: ${{ steps.profile.outputs.profile }}
+      evaluation_result: ${{ steps.gate.outputs.evaluation_result }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           python-version: "3.14"
       - run: uv sync
+
+      - name: Validate evaluation profile
+        id: profile
+        env:
+          REQUESTED_PROFILE: ${{ inputs.profile }}
+        run: |
+          profile="${REQUESTED_PROFILE:-full}"
+          if [[ "$profile" != "full" && "$profile" != "quick" ]]; then
+            echo "Unsupported evaluation profile '$profile'; expected full or quick." >&2
+            exit 1
+          fi
+          echo "profile=$profile" >> "$GITHUB_OUTPUT"
+          echo "Selected evaluation profile: $profile"
 
       - name: Azure login (workload identity federation, candidate identity)
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -68,15 +92,34 @@ jobs:
           DESCRIPTION: "${{ github.event_name }} ${{ github.sha }} ${{ github.event.pull_request.title || github.event.head_commit.message }}"
         run: uv run python scripts/foundry_agents.py --github-output create-version --description "$DESCRIPTION"
 
-      - name: Run evals against candidate v${{ steps.candidate.outputs.version }}
+      - name: Prepare clinical evaluation checks
+        id: evaluation
+        env:
+          PROFILE: ${{ steps.profile.outputs.profile }}
+          VERSION: ${{ steps.candidate.outputs.version }}
+          TAG: ${{ inputs.tag }}-${{ steps.profile.outputs.profile }}
         run: |
-          uv run python evals/run_eval.py \
-            --version "${{ steps.candidate.outputs.version }}" \
-            --tag "${{ inputs.tag }}-v${{ steps.candidate.outputs.version }}" \
-            --out evals/results/candidate
+          uv run python evals/foundry_action.py prepare --github-output \
+            --profile "$PROFILE" --version "$VERSION" \
+            --tag "$TAG-v$VERSION" --out evals/results/candidate
+
+      - name: Run Microsoft Foundry evaluations
+        id: foundry
+        uses: microsoft/ai-agent-evals@22a09a8f9dbc407e3a5429db9635111fb669f463 # v3-beta
+        with:
+          azure-ai-project-endpoint: ${{ env.FOUNDRY_PROJECT_ENDPOINT }}
+          deployment-name: ${{ steps.evaluation.outputs.deployment_name }}
+          agent-ids: ${{ steps.evaluation.outputs.agent_id }}
+          data-path: ${{ steps.evaluation.outputs.data_path }}
+
+      - name: Collect candidate results for release policy
+        if: always() && steps.evaluation.outcome == 'success'
+        run: |
+          uv run python evals/foundry_action.py collect --out evals/results/candidate \
+            --action-status "${{ steps.foundry.outcome }}"
 
       - name: Baseline metrics for the current production version
-        if: always()
+        if: always() && steps.profile.outputs.profile == 'full'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -88,6 +131,16 @@ jobs:
             rm -rf evals/results/baseline
             gh run download "$run_id" --name eval-results-candidate --dir evals/results/baseline 2>/dev/null || continue
             v=$(jq -r '.version' evals/results/baseline/candidate/results.json 2>/dev/null)
+            rp=$(jq -r '.evaluation_profile // empty' evals/results/baseline/candidate/results.json 2>/dev/null)
+            eligible=$(jq -r '.release_eligible // empty' evals/results/baseline/candidate/results.json 2>/dev/null)
+            count=$(jq -r '.counts.total // empty' evals/results/baseline/candidate/results.json 2>/dev/null)
+            expected=$(cat evals/datasets/golden.jsonl evals/datasets/safety.jsonl | grep -cve '^[[:space:]]*$')
+            if { [ -n "$rp" ] && [ "$rp" != "full" ]; } || [ "$eligible" = "false" ] || \
+               [ "$count" != "$expected" ]; then
+              echo "Skipping non-full or incomplete baseline artifact from run $run_id."
+              rm -rf evals/results/baseline
+              continue
+            fi
             if [ "$v" = "$PINNED" ]; then echo "Baseline: release run $run_id (v$v)"; exit 0; fi
           done
           rm -rf evals/results/baseline
@@ -96,20 +149,30 @@ jobs:
       - name: Eval gate (fail closed)
         id: gate
         if: always()
+        env:
+          PROFILE: ${{ steps.profile.outputs.profile }}
         run: |
           baseline=""
-          [ -f evals/results/baseline/candidate/results.json ] && baseline="--baseline evals/results/baseline/candidate/results.json"
+          if [ "$PROFILE" = "full" ] && [ -f evals/results/baseline/candidate/results.json ]; then
+            baseline="--baseline evals/results/baseline/candidate/results.json"
+          fi
           set +e
-          uv run python evals/gate.py evals/results/candidate/results.json $baseline | tee evals/results/gate.md
+          uv run python evals/gate.py evals/results/candidate/results.json --profile "$PROFILE" $baseline | tee evals/results/gate.md
           code=${PIPESTATUS[0]}
-          if [ "$code" = "0" ]; then echo "result=pass" >> "$GITHUB_OUTPUT"; else echo "result=fail" >> "$GITHUB_OUTPUT"; fi
+          if [ "$code" = "0" ]; then
+            echo "evaluation_result=pass" >> "$GITHUB_OUTPUT"
+            if [ "$PROFILE" = "full" ]; then echo "result=pass" >> "$GITHUB_OUTPUT"; else echo "result=not-eligible" >> "$GITHUB_OUTPUT"; fi
+          else
+            echo "evaluation_result=fail" >> "$GITHUB_OUTPUT"
+            if [ "$PROFILE" = "full" ]; then echo "result=fail" >> "$GITHUB_OUTPUT"; else echo "result=not-eligible" >> "$GITHUB_OUTPUT"; fi
+          fi
           exit $code
 
       - name: Upload eval results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: eval-results-candidate
+          name: ${{ steps.profile.outputs.profile == 'quick' && 'eval-results-candidate-quick' || 'eval-results-candidate' }}
           path: evals/results/
           if-no-files-found: warn
 
@@ -117,10 +180,15 @@ jobs:
         if: always() && github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
+          PROFILE: ${{ steps.profile.outputs.profile }}
+          EVALUATION_RESULT: ${{ steps.gate.outputs.evaluation_result }}
         run: |
           {
             echo "<!-- eval-gate -->"
             echo "Candidate agent version **${{ steps.candidate.outputs.version || 'n/a' }}** (production stays on **${{ steps.prod.outputs.pinned_version }}**)"
+            if [ "$PROFILE" = "quick" ]; then echo; echo "**Quick demo evaluation - not release approval.**"; fi
+            echo
+            echo "Profile: **$PROFILE**; evaluation result: **${EVALUATION_RESULT:-not produced}**."
             echo
             cat evals/results/gate.md 2>/dev/null || echo "Eval gate did not produce results - failing closed."
           } > comment.md

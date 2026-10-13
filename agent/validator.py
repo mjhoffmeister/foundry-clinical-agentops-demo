@@ -18,7 +18,7 @@ from typing import Any
 
 SOURCE_ID_RE = re.compile(r"mq-[a-z]+-[0-9a-z]+-\d+")
 CITATION_RE = re.compile(r"\[(mq-[a-z]+-[0-9a-z]+-\d+)\]")
-TRAILER_RE = re.compile(r"\n*<!-- meta: (\{.*?\}) -->\s*$", re.S)
+TRAILER_PATTERN = r"\n*<!-- meta: (\{.*?\}) -->\s*$"
 SOURCES_HEADER_RE = re.compile(r"\n+#{0,3}\s*\**\s*(?:Sources|References)\s*:?\s*\**\s*:?\s*\n.*$", re.S | re.I)
 
 ABSTAIN_MARKER = "I don't have enough information in the knowledge base"
@@ -81,7 +81,7 @@ def extract_sources(tool_outputs: list[str]) -> dict[str, SourceDoc]:
 
 def strip_trailer(text: str) -> tuple[str, dict[str, Any] | None]:
     """Split an answer into (visible text, meta dict)."""
-    match = TRAILER_RE.search(text or "")
+    match = re.search(TRAILER_PATTERN, text or "", re.S)
     if not match:
         return text or "", None
     try:

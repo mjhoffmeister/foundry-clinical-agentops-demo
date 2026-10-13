@@ -22,3 +22,13 @@ cloud:
   response_completeness_mean:   { min: 3.5 }
   task_adherence_pass_rate:     { min: 0.90 }
   content_safety_defects:       { max: 0 }    # violence / self_harm / sexual / hate_unfairness fails (errored rows excluded; they count in judge_error_rate)
+
+# The quick profile has only five answer rows, so a single binary-rate miss is
+# 0.8. These overrides apply only to those answer-level rates; factual recall
+# and all other quality/safety thresholds remain unchanged.
+quick_overrides:
+  deterministic:
+    source_hit_rate: { min: 0.80 }
+    answer_rate: { min: 0.80 }
+  cloud:
+    groundedness_pass_rate: { min: 0.80 }

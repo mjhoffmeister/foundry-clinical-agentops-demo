@@ -1,8 +1,8 @@
 name: ci
 
 # Pull requests from this repository: credential-free checks, then deploy the
-# PR's agent code as a candidate version and gate on evals. The "eval-gate"
-# job is a required status check on main.
+# PR's agent code as a candidate version and gate on evals when agent-related
+# paths changed. The "eval-gate" job is a required status check on main.
 
 on:
   pull_request:
@@ -19,13 +19,36 @@ jobs:
   checks:
     uses: ./.github/workflows/_checks.yml
 
+  changes:
+    name: Detect changed surfaces
+    runs-on: ubuntu-latest
+    outputs:
+      agent_changed: ${{ steps.paths.outputs.agent_changed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Classify changes
+        id: paths
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          changed="$(git diff --name-only "$BASE" "$HEAD")"
+          if grep -Eq '^(agent/|evals/|scripts/(foundry_agents|smoke)\.py$|pyproject\.toml$|uv\.lock$|\.github/workflows/(_evaluate|demo-eval)\.yml$)' <<<"$changed"; then
+            echo "agent_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "agent_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
   eval-gate:
     # Fork PRs never receive Azure credentials (see ci-fork.yml).
-    if: github.event.pull_request.head.repo.full_name == github.repository
-    needs: checks
+    if: github.event.pull_request.head.repo.full_name == github.repository && needs.changes.outputs.agent_changed == 'true'
+    needs: [checks, changes]
     uses: ./.github/workflows/_evaluate.yml
     with:
       tag: pr${{ github.event.pull_request.number }}
+      profile: ${{ vars.PR_EVAL_PROFILE || 'full' }}
     permissions:
       contents: read
       id-token: write
