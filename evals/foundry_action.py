@@ -328,6 +328,8 @@ def retry_code_errors(client: OpenAI, state: dict, outputs: list[dict]) -> dict 
             if graders.applicable(metric, row, res) and result is not None and result_error(result):
                 names.add(name)
                 affected[row["id"]] = output
+                detail = (result.get("sample") or {}).get("error") or result.get("reason") or result.get("status")
+                print(f"Evaluator error {row['id']} {metric}: {str(detail)[:400]}", file=sys.stderr)
     if not affected:
         return None
     judge = os.environ.get("AZURE_AI_JUDGE_DEPLOYMENT_NAME") or os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME")
