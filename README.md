@@ -17,8 +17,8 @@ a pro-code **hosted agent** grounded by a **Foundry IQ knowledge base**, shipped
 |---|---|
 | Pro-code agent that does more than a prompt agent can | `agent/` — input checks → Foundry IQ retrieval → structured answer → deterministic citation validator → custom OTel span attributes |
 | Retrieval without hand-wired RAG | Foundry IQ knowledge base (`kb/provision_kb.py`) exposed to the agent through a Foundry toolbox (`kb/toolbox.yaml`) |
-| Eval gate that blocks bad changes | `evals/` — deterministic graders (retrieval hit, required facts, citations, abstention, red-team) + Foundry cloud evaluators (groundedness, completeness, task adherence, content safety); `gate.py` fails closed |
-| Safe release mechanics | Every PR deploys a **new agent version that receives no production traffic**; production is a **pinned version**; promotion = human approval + compare-and-swap pin |
+| Eval gate that blocks bad changes | Official `microsoft/ai-agent-evals` Action + clinical custom code evaluators (retrieval, facts, citations, abstention, red-team) + a fail-closed release policy in `gate.py` |
+| Safe release mechanics | Agent-related PRs deploy a **new agent version that receives no production traffic**; production is a **pinned version**; promotion = human approval + compare-and-swap pin. UI-only changes do not create an agent version. |
 | Least-privilege CI | Two user-assigned identities via OIDC: *candidate* (create versions, run evals) and *promote* (only from the `production` environment) |
 | Observability | Foundry traces (agent → tool → model spans, custom attributes), App Insights, Foundry evaluations (CI gate + scheduled suite), monitoring dashboard |
 | Governance | Guardrail policy (prompt shields, content filters) on model deployments; Azure Policy **deny** non-approved models + **audit** guardrail settings → Foundry Control Plane Compliance |
@@ -57,7 +57,7 @@ agent/            hosted agent (main.py, checks.py, validator.py, prompts/system
 web/              FastAPI chat UI (App Service, Easy Auth)
 data/ingest.py    builds data/corpus.jsonl from MedQuAD
 kb/               Foundry IQ knowledge base + toolbox provisioning
-evals/            datasets, run_eval.py, gate.py, thresholds.yaml
+evals/            datasets, graders.py, foundry_action.py, local run_eval.py, gate.py, thresholds.yaml
 infra/            Terraform (AzAPI) — Foundry, models, guardrail, Search, App Insights, App Service, policy, CI identities
 scripts/          foundry_agents.py (versions/pin/invoke), smoke.py, continuous_eval.py, azd hooks
 demo/             break.ps1 / fix.ps1 / reset.ps1 / prep.ps1, prompt variants, baseline.json
@@ -72,7 +72,22 @@ docs/             DEMO-SCRIPT.md, compat-test.md
 - [uv](https://docs.astral.sh/uv/) (installs Python 3.14 automatically)
 - PowerShell 7 (azd hooks and demo scripts)
 
-> Behind a corporate PyPI proxy, set `UV_INDEX_URL` before `uv sync`.
+For local development behind a corporate PyPI proxy, set the process-local
+`DEMO_UV_INDEX_URL` to your organization's approved `/simple/` endpoint.
+Do not commit corporate feed URLs or credentials in project or workflow configuration.
+To install tooling without creating or rewriting `uv.lock`:
+
+```powershell
+uv venv --python 3.14                      # Only if .venv does not exist
+uv pip install --no-config --python .venv\Scripts\python.exe --default-index "$env:DEMO_UV_INDEX_URL" --requirements pyproject.toml --group dev
+uv run --no-sync pytest -q
+uv run --no-sync ruff check .
+```
+
+Use `--no-sync` for subsequent local commands so `uv run` does not attempt a
+public-registry sync. Demo helpers also accept the local `DEMO_UV_INDEX_URL`
+override via `Invoke-Tools`. GitHub CI keeps its existing `uv sync` commands
+and public-registry configuration.
 
 ## Setup
 
@@ -119,12 +134,81 @@ uv run python scripts/foundry_agents.py pin --version <n>
 
 ## Eval gate
 
-`evals/run_eval.py` invokes **a specific agent version** (never "whatever production is"),
-computes deterministic metrics from the agent's validated output, and runs Foundry cloud
-evaluators over the same responses. `evals/gate.py` compares against
-`evals/thresholds.yaml` and **fails closed** (missing metric, evaluator error, row-count
-mismatch, wrong version → fail). Results are posted to the job summary and the PR, with a
-delta against the version production is pinned to (the release artifact that evaluated it).
+**Deploy candidate → Run Foundry evaluations → Check release thresholds → Approve → Promote**
+
+CI uses the official [`microsoft/ai-agent-evals`](https://learn.microsoft.com/en-us/azure/foundry/how-to/evaluation-github-action)
+Action, pinned to a reviewed commit of `v3-beta`. It invokes **a specific agent version**
+(never "whatever production is"), runs Foundry's quality/safety evaluators and our
+clinical code evaluators over the same invocation results, and publishes its report.
+
+`evals/graders.py` defines the clinical checks. `evals/foundry_action.py` prepares the
+existing datasets, registers content-addressed code evaluators, and converts the exact
+dataset-bound Action run into the existing release contract. It verifies every row,
+the served agent version, and agreement between cloud and local clinical grading.
+It never selects "the latest evaluation" or invokes the agent a second time.
+Collection retrieves full row details: the list API truncates long answers and metadata.
+An errored clinical code grader gets one bounded retry on the **captured response only**.
+Persistent errors still fail closed; there is no fallback to a weaker evaluation suite.
+
+`evals/gate.py` owns **release policy**, not evaluation execution: it applies the unchanged
+`evals/thresholds.yaml` and fails closed on missing metrics, evaluator errors, incomplete
+rows, wrong versions, or a failed Action. Results are posted to the job summary and PR,
+with a delta against the release artifact for the version production is actually pinned to.
+Quality metrics apply to answerable golden rows; content safety applies across both
+datasets. Raw Action statistics are reporting, not permission to release.
+
+Two explicit profiles are available:
+
+| Profile | Rows and cloud evaluators | Use |
+|---|---|---|
+| `full` | All dataset rows; groundedness, response completeness, task adherence, all four content-safety judges, and every clinical code check | Default; mandatory for releases and scheduled production evaluation |
+| `quick` | 12 curated regression rows; groundedness and response completeness plus every clinical code check | Optional PR/demo check only; **never release approval** |
+
+Unset PR repository variable `PR_EVAL_PROFILE` means `full`. Set it to `quick`
+to reduce coverage for future same-repository PR evaluations; invalid values fail
+instead of falling back. The separate `demo-eval.yml` manual workflow offers a
+`full`/`quick` choice, defaulting to `full`, and never promotes. The reusable
+candidate evaluator reports quick passes as `not-eligible` for release; merging
+always runs a separate full evaluation on the merged commit before the existing
+production environment approval and compare-and-swap pin.
+
+The quick set is `g01`, `g04`, `g11`, `g15`, `g18`, `a04`, `s01`, `x01`,
+`x02`, `x03`, `x06`, and `x08`: five grounded clinical answers, two abstention
+or scope cases, and five red-team cases. It omits task-adherence and all paid
+Foundry content-safety judges. Those omitted checks are reported as not evaluated,
+never as zero defects or passes. Quick also preserves the full deterministic
+thresholds, error-rate threshold, actual retrieved-evidence mapping, and exact
+12-row validation. It is not an automatic retry or an error-recovery fallback.
+
+To toggle future PR runs from a PowerShell terminal in this repository:
+
+```powershell
+pwsh .\demo\evals.ps1                 # Read the current setting; unset means full
+pwsh .\demo\evals.ps1 -Profile quick  # Set PR_EVAL_PROFILE for future PR runs
+pwsh .\demo\evals.ps1 -Profile full   # Restore full PR coverage
+```
+
+This repository variable affects only PR runs queued after it is changed.
+Release and scheduled production workflows select `full` explicitly. To run a
+manual candidate check on a pushed branch:
+
+```powershell
+gh workflow run demo-eval.yml --ref <pushed-branch> -f profile=quick
+```
+
+The manual workflow must first exist on the default branch to be dispatchable.
+Quick checks do not guarantee a fixed run time; Action setup, candidate startup,
+and Foundry queue delays remain.
+
+Custom code evaluation requires the account-scoped `OpenAI/evals/read` and
+`OpenAI/evals/write` data actions. `infra/rbac.tf` grants only those additional permissions
+to the candidate and deployer identities, rather than broad OpenAI Contributor access.
+Provision the RBAC changes before running the updated workflows. The promote identity
+does not receive this role.
+
+The local `evals/run_eval.py` commands remain available for smoke tests and manual
+investigations, using the same pure clinical graders. The Action's Python environment
+is separate from the repository's Python 3.14 tooling.
 
 | Metric | Measures | Gate |
 |---|---|---|
@@ -143,11 +227,24 @@ Errored evaluator rows are counted in `judge_error_rate`, never as `content_safe
 throttled safety service is an infrastructure failure, not a safety violation. Both fail the gate,
 but the summary names the real cause.
 
-A gate run costs roughly **900K evaluation tokens**: ~550K against the Microsoft-hosted safety
-service (`azure_ai_system_model`, billed — see the Safety Evaluation Input Tokens meter) and ~380K
-against the `gpt-5.4` judge. Each run prints its own total in the job summary. Content safety is
-deliberately run over all 46 rows, not just the red-team ones: a safety regression on a benign
-clinical question is exactly what the gate exists to catch. Note that Foundry also reports an
+Each run prints its actual evaluation token usage in the job summary; the native Action's
+tool-evidence inputs can differ from a manual run's inputs. Full native validation
+runs consumed approximately **4.9–5.0 million evaluation tokens** each, versus roughly
+900K for the previous manual runner. The following profile estimates use recorded run
+usage and verified rates; they are projections, not invoice amounts or guarantees:
+
+| Configuration | Estimated evaluation cost/run | Coverage note |
+|---|---:|---|
+| Full, 46 rows | **$22.58** | All configured quality, safety and clinical checks |
+| 12 rows, all built-in evaluators | **$5.42** | Smaller corpus, same evaluator overhead |
+| Quick, 12 curated rows | **$1.34** | Clinical checks plus groundedness and completeness; no paid task-adherence or content-safety judges |
+
+Native evaluation retains full tool evidence and also reports evaluators outside
+the release gate's applicable slices; release thresholds and aggregation scopes
+remain unchanged. Content safety in the **full release gate** is deliberately run
+over all 46 rows, not just the red-team ones: a safety regression on a benign
+clinical question is exactly what the gate exists to catch. Keep the existing
+UI-only evaluation skips. Note that Foundry also reports an
 `azure_ai_evaluation` aggregate row that repeats the per-model totals — summing every row
 double-counts the run.
 

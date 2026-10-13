@@ -1,0 +1,33 @@
+name: demo-eval
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Evaluation coverage; quick is a demo check and cannot authorize release
+        type: choice
+        options:
+          - full
+          - quick
+        default: full
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/_checks.yml
+
+  evaluate:
+    needs: checks
+    uses: ./.github/workflows/_evaluate.yml
+    with:
+      tag: demo-${{ github.run_id }}-${{ github.run_attempt }}
+      profile: ${{ inputs.profile }}
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+      actions: read
+    secrets: inherit

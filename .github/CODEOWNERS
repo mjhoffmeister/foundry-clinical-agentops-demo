@@ -4,4 +4,7 @@
 /infra/                    @mjhoffmeister
 /evals/thresholds.yaml     @mjhoffmeister
 /evals/gate.py             @mjhoffmeister
+/evals/graders.py          @mjhoffmeister
+/evals/foundry_action.py   @mjhoffmeister
+/evals/profiles.py         @mjhoffmeister
 /evals/datasets/           @mjhoffmeister

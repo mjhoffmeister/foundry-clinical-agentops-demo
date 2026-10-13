@@ -1,9 +1,9 @@
 name: release
 
-# Merge to main: re-run checks and the eval gate on the merged code (new
-# candidate version), then - only after a human approves the "production"
-# environment - pin the endpoint selector to that version (compare-and-swap),
-# deploy the web UI if it changed, and smoke test production.
+# Merge to main: re-run checks and, for agent-related changes, the eval gate on
+# the merged code (new candidate version). Agent changes then require human
+# approval before pinning production; web-only changes deploy the UI without
+# creating or promoting an agent version.
 
 on:
   push:
@@ -11,9 +11,14 @@ on:
     paths:
       - "agent/**"
       - "evals/**"
+      - "scripts/foundry_agents.py"
+      - "scripts/smoke.py"
+      - "pyproject.toml"
+      - "uv.lock"
       - "web/**"
       - ".github/workflows/release.yml"
       - ".github/workflows/_evaluate.yml"
+      - ".github/workflows/demo-eval.yml"
   workflow_dispatch:
 
 permissions:
@@ -27,11 +32,46 @@ jobs:
   checks:
     uses: ./.github/workflows/_checks.yml
 
+  changes:
+    name: Detect changed surfaces
+    runs-on: ubuntu-latest
+    outputs:
+      agent_changed: ${{ steps.paths.outputs.agent_changed }}
+      web_changed: ${{ steps.paths.outputs.web_changed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Classify changes
+        id: paths
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "${{ github.event_name }}" != "push" ] || [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            changed="$(git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA")"
+          else
+            changed="$(git diff --name-only "$BEFORE" "$GITHUB_SHA")"
+          fi
+
+          if grep -Eq '^(agent/|evals/|scripts/(foundry_agents|smoke)\.py$|pyproject\.toml$|uv\.lock$|\.github/workflows/(_evaluate|demo-eval)\.yml$)' <<<"$changed"; then
+            echo "agent_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "agent_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+          if grep -q '^web/' <<<"$changed"; then
+            echo "web_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "web_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
   eval-gate:
-    needs: checks
+    if: needs.changes.outputs.agent_changed == 'true'
+    needs: [checks, changes]
     uses: ./.github/workflows/_evaluate.yml
     with:
       tag: main-${{ github.run_number }}
+      profile: full
     permissions:
       contents: read
       id-token: write
@@ -41,8 +81,8 @@ jobs:
 
   promote:
     name: promote to production
-    needs: eval-gate
-    if: needs.eval-gate.outputs.gate == 'pass'
+    needs: [eval-gate, changes]
+    if: needs.changes.outputs.agent_changed == 'true' && needs.eval-gate.outputs.gate == 'pass' && needs.eval-gate.outputs.evaluation_profile == 'full' && needs.eval-gate.outputs.evaluation_result == 'pass'
     runs-on: ubuntu-latest
     environment:
       name: production
@@ -77,21 +117,8 @@ jobs:
       - name: Pin production to v${{ env.CANDIDATE }} (compare-and-swap on v${{ env.PROD_BEFORE }})
         run: uv run python scripts/foundry_agents.py pin --version "$CANDIDATE" --expect-current "$PROD_BEFORE"
 
-      - name: Did web/ change?
-        id: web
-        env:
-          BEFORE: ${{ github.event.before }}
-        run: |
-          if [ "${{ github.event_name }}" != "push" ] || [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
-             || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null \
-             || [ -n "$(git diff --name-only "$BEFORE" "$GITHUB_SHA" -- web/)" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Deploy web UI
-        if: steps.web.outputs.changed == 'true'
+        if: needs.changes.outputs.web_changed == 'true'
         run: |
           (cd web && zip -qr ../web.zip . -x '*.pyc' -x '__pycache__/*' -x '.venv/*')
           az webapp deploy -g "${{ vars.AZURE_RESOURCE_GROUP }}" -n "${{ vars.WEB_APP_NAME }}" \
@@ -111,3 +138,31 @@ jobs:
             echo "| Production now | v$CANDIDATE |"
             echo "| Rollback | \`python scripts/foundry_agents.py pin --version $PROD_BEFORE\` or run the **reset** workflow |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-web-only:
+    name: deploy web UI
+    needs: [checks, changes]
+    if: needs.changes.outputs.agent_changed == 'false' && needs.changes.outputs.web_changed == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.WEB_APP_URL }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CI_PROMOTE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+      - name: Deploy web UI
+        run: |
+          (cd web && zip -qr ../web.zip . -x '*.pyc' -x '__pycache__/*' -x '.venv/*')
+          az webapp deploy -g "${{ vars.AZURE_RESOURCE_GROUP }}" -n "${{ vars.WEB_APP_NAME }}" \
+            --src-path web.zip --type zip --async false --track-status false

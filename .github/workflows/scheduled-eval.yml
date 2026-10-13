@@ -16,7 +16,7 @@ permissions:
 jobs:
   eval-production:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     env:
       AZURE_CLIENT_ID: ${{ vars.AZURE_CI_CANDIDATE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
@@ -25,6 +25,7 @@ jobs:
       AGENT_NAME: ${{ vars.AGENT_NAME }}
       AZURE_SEARCH_ENDPOINT: ${{ vars.AZURE_SEARCH_ENDPOINT }}
       AZURE_AI_JUDGE_DEPLOYMENT_NAME: ${{ vars.AZURE_AI_JUDGE_DEPLOYMENT_NAME }}
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZURE_AI_MODEL_DEPLOYMENT_NAME }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
@@ -39,13 +40,27 @@ jobs:
       - name: Resolve production version
         id: prod
         run: uv run python scripts/foundry_agents.py --github-output selector
-      - name: Evaluate production v${{ steps.prod.outputs.pinned_version }}
+      - name: Prepare clinical evaluation checks
+        id: evaluation
         run: |
-          uv run python evals/run_eval.py --version "${{ steps.prod.outputs.pinned_version }}" \
+          uv run python evals/foundry_action.py prepare --github-output --profile full --version "${{ steps.prod.outputs.pinned_version }}" \
             --tag "scheduled-v${{ steps.prod.outputs.pinned_version }}-${{ github.run_number }}" --out evals/results/prod
+      - name: Run Microsoft Foundry evaluations
+        id: foundry
+        uses: microsoft/ai-agent-evals@22a09a8f9dbc407e3a5429db9635111fb669f463 # v3-beta
+        with:
+          azure-ai-project-endpoint: ${{ env.FOUNDRY_PROJECT_ENDPOINT }}
+          deployment-name: ${{ steps.evaluation.outputs.deployment_name }}
+          agent-ids: ${{ steps.evaluation.outputs.agent_id }}
+          data-path: ${{ steps.evaluation.outputs.data_path }}
+      - name: Collect production results for release policy
+        if: always() && steps.evaluation.outcome == 'success'
+        run: |
+          uv run python evals/foundry_action.py collect --out evals/results/prod \
+            --action-status "${{ steps.foundry.outcome }}"
       - name: Gate
         if: always()
-        run: uv run python evals/gate.py evals/results/prod/results.json
+        run: uv run python evals/gate.py evals/results/prod/results.json --profile full
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:

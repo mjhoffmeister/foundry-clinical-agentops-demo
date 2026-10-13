@@ -62,6 +62,48 @@ locals {
       "presenter-${idx}-law-reader" = { principal = id, role = "log_analytics_reader", scope = azapi_resource.log_analytics.id }
     }
   ]...)
+
+  eval_assignments = merge(
+    { candidate = { principal = azapi_resource.ci_candidate.output.properties.principalId, type = "ServicePrincipal" } },
+    var.principal_id == "" ? {} : { deployer = { principal = var.principal_id, type = var.principal_type } },
+  )
+}
+
+resource "azapi_resource" "clinical_eval_writer" {
+  type      = "Microsoft.Authorization/roleDefinitions@2022-04-01"
+  name      = uuidv5("url", "${azapi_resource.resource_group.id}|clinical-eval-writer")
+  parent_id = azapi_resource.resource_group.id
+
+  body = {
+    properties = {
+      roleName         = "Clinical evaluation writer ${local.resource_token}"
+      description      = "Run Foundry custom code evaluations without broad OpenAI Contributor access."
+      type             = "CustomRole"
+      assignableScopes = [azapi_resource.resource_group.id]
+      permissions = [{
+        actions        = []
+        notActions     = []
+        dataActions    = ["Microsoft.CognitiveServices/accounts/OpenAI/evals/read", "Microsoft.CognitiveServices/accounts/OpenAI/evals/write"]
+        notDataActions = []
+      }]
+    }
+  }
+}
+
+resource "azapi_resource" "eval_writer_assignment" {
+  for_each = local.eval_assignments
+
+  type      = "Microsoft.Authorization/roleAssignments@2022-04-01"
+  name      = uuidv5("url", "${azapi_resource.foundry_account.id}|${each.key}|clinical-eval-writer|${azapi_resource.clinical_eval_writer.name}")
+  parent_id = azapi_resource.foundry_account.id
+
+  body = {
+    properties = {
+      principalId      = each.value.principal
+      principalType    = each.value.type
+      roleDefinitionId = "/subscriptions/${var.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/${azapi_resource.clinical_eval_writer.name}"
+    }
+  }
 }
 
 resource "azapi_resource" "service_role" {

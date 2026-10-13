@@ -17,6 +17,40 @@ The demo shows the agent first, then the evidence behind each answer, then the c
 
 ## 0. Before the session
 
+Quick evaluation is an **explicit demo profile**, not release approval. It runs
+12 curated cases with all deterministic clinical checks plus groundedness and
+response-completeness judges. Task-adherence and Foundry content-safety judges
+are omitted. A quick PR check may pass CI, but it cannot authorize production.
+Merge always triggers the independent full release suite and still waits for
+the production environment approval.
+
+Before changing a shared repository variable, record its current value so you
+can restore it after the session:
+
+```powershell
+pwsh .\demo\evals.ps1
+```
+
+The command only reads and reports the current setting; unset means `full`.
+Set the quick profile before creating the break PR:
+
+```powershell
+pwsh .\demo\evals.ps1 -Profile quick
+```
+
+This affects future PR workflows only. A run already queued keeps its original
+profile. `release.yml` and `scheduled-eval.yml` always use the full suite.
+Restore the previously recorded value after the demo:
+
+```powershell
+pwsh .\demo\evals.ps1 -Profile full
+# If PR_EVAL_PROFILE was originally unset:
+gh variable delete PR_EVAL_PROFILE --repo (gh repo view --json nameWithOwner --jq .nameWithOwner)
+```
+
+The script does not launch evaluations, edit Git state, or affect production.
+Set up and restore the variable using an authorized repository account.
+
 | When | Action |
 |---|---|
 | ≥ 24 h before | Run `azd up` if the environment is new. The Compliance view in Foundry Control Plane fills in asynchronously, so stage this early. |
@@ -88,9 +122,11 @@ Use the sample buttons in the UI. Each answer shows:
 
 ## 4. Evaluations and continuous evaluation (7 min) — tabs 4 and 5
 
-1. **Evaluations** tab: open the baseline run for the production version. It has two runs:
-   - the **quality** run: groundedness, task adherence, response completeness;
-   - the **safety** run: violence, self-harm, sexual and hate content, run against red-team prompts.
+1. **Evaluations** tab: open the native CI run for the production version. It contains:
+   - **quality**: groundedness, task adherence, response completeness;
+   - **safety**: violence, self-harm, sexual and hate content across the full corpus;
+   - **clinical code evaluators**: sources, facts, citations, abstention, and red-team expectations.
+   Older manual baselines can still have separate quality and safety runs.
 2. Explain the gate metrics (README "Eval gate" table):
 
    | Metric | Threshold |
@@ -103,6 +139,10 @@ Use the sample buttons in the UI. Each answer shows:
    | safety defects | 0 |
 
    The **deterministic** graders (facts, sources, citations, red-team expectations) sit next to **LLM judges**. Judges are lenient on short answers, and the deterministic metrics catch that.
+
+   **Say:** "Microsoft's Action executes the evaluation. Our clinical checks define
+   application correctness. Our release policy decides whether the scores are good
+   enough to ship. An evaluation report is not deployment approval."
 3. **Continuous:**
    - Agent **Monitor** tab: open the **continuous evaluation** results. This is a scheduled trace evaluation that runs daily over the previous 24 hours of real production conversations. It scores intent resolution and content safety, with no test dataset. Run `prep.ps1 -FreshEval` the morning of the demo for same-day results.
    - Open the run under **Evaluations** → `clinical-agent - continuous (production traces)`. Click a failed row: it is usually an `intent_resolution` miss on a question the agent correctly refused (out of scope). **Say:** "The judge is strict. A refusal counts as 'intent not resolved'. That's why we review the scores, not just alert on them."
@@ -123,12 +163,45 @@ This opens the PR **"Shorter answers for mobile clinicians"**. The prompt change
 - Open the **ci** run:
   1. `_checks` runs lint and unit tests.
   2. `eval-gate` deploys a **candidate** agent version (production is untouched; prove it in tab 1).
-  3. It runs the 46-row suite.
-  4. It runs the gate.
-- About 10–15 min later the gate **fails**. Show the PR comment table: **required_facts_recall ≈ 0.85 < 0.90**. Answers lost key facts (when to seek care, causes), while the LLM judges still look fine.
-- Branch protection blocks the merge.
+  3. **Prepare clinical evaluation checks** uses the selected profile. Quick selects exactly `g01`, `g04`, `g11`, `g15`, `g18`, `a04`, `s01`, `x01`, `x02`, `x03`, `x06`, and `x08`, and registers the clinical evaluators.
+  4. **Run Microsoft Foundry evaluations** is the official Action; it invokes the candidate and scores the same responses. Quick runs groundedness and response completeness, not task adherence or the content-safety judges.
+  5. **Collect candidate results** verifies the exact profile rows, dataset and agent version.
+  6. **Quick demo evaluation** applies the deterministic clinical and selected cloud thresholds. The report prominently says **“Demo evaluation - not release approval.”**
 
-**If CI is slow:** switch to the backup PR (created beforehand with `break.ps1` on a second branch and left failed). Talk through its comment.
+  **Say:** "This quick profile makes the PR regression easier to demonstrate.
+  A green quick check is only this demo check: merging still reruns the full
+  release evaluation, and approval is separate. Production has not moved."
+- Show the PR comment and candidate details. In saved historical responses,
+  the concise prompt scored **0.75** selected required-facts recall versus
+  **0.95** for the repaired prompt, and the concise prompt exposed one selected
+  citation-injection defect. These are rehearsal results, not fixed predictions:
+  use the actual run's scores and do not conceal an unexpected pass/fail.
+- The curated suite retains asthma symptoms, several completeness-sensitive
+  answers, missing-evidence abstention, out-of-scope refusal, jailbreak, prompt
+  leakage, identifier handling, patient-specific dosing, and citation injection.
+- Branch protection still checks the job result. Quick is intentionally an
+  optional PR-demo check, not a production release gate.
+
+**If CI is slow or unavailable:** use a rehearsal PR/comment as previously
+recorded evidence and clearly label it as historical, or manually queue the
+demo workflow below. Do not describe old output as a live evaluation.
+
+### Manual candidate-evaluation alternative
+
+The new workflow must first be merged to the default branch to become
+dispatchable. The selected `--ref` still determines which code is checked out;
+push that branch before dispatch. An uncommitted worktree or a workflow file
+that exists only on a feature branch is not enough.
+
+```powershell
+gh workflow run demo-eval.yml --ref <pushed-branch> -f profile=quick
+gh run list --workflow demo-eval.yml --branch <pushed-branch> --json databaseId,headBranch,status,createdAt
+gh run watch <exact-run-id>
+```
+
+Choose the run ID that matches the branch and dispatch time; do not assume the
+latest listed run belongs to this request. A manual full or quick run evaluates
+a candidate only and never pins production.
 
 ## 6. Fix → promote (10 min)
 
@@ -138,9 +211,13 @@ pwsh demo/fix.ps1
 
 The prompt changes to 1.1.1: *a one-sentence answer, then ≤ 5 cited bullets, never omitting key facts*.
 
-1. The gate re-runs on a new candidate and **passes**. The comment shows the deltas against production.
-2. **Merge** the PR. The **release** workflow:
-   - rebuilds and re-evaluates the merged commit;
+1. The quick check re-runs on a new candidate. The PR comment is labeled
+   **“Demo evaluation - not release approval”** and has no production delta,
+   because quick coverage is not comparable to the full baseline. Use the
+   actual check result rather than promising a fixed outcome.
+2. **Merge** the PR. The **release** workflow always selects `full`, regardless
+   of `PR_EVAL_PROFILE`, and:
+   - rebuilds and re-evaluates the merged commit on all dataset rows with all release evaluators;
    - waits for the **`production` environment approval**. Approve it as the reviewer.
 3. Promotion **pins the agent's production version with compare-and-swap**: it fails if someone else promoted in the meantime.
 4. Tab 1: ask the stroke question again. The **agent version** and **prompt 1.1.1** chips change, and the answer is shorter but complete.
@@ -197,6 +274,10 @@ Candidate versions are kept. Then run `pwsh demo/prep.ps1` again.
 | Symptom | Fix |
 |---|---|
 | Gate fails with "missing cloud metric" | Foundry eval queue is stuck. Cancel `in_progress` runs (see `docs/compat-test.md`). If a trace-eval run is stuck, also run `scripts/continuous_eval.py --mode off`. Then re-run the job. |
+| PR uses an unexpected profile | Run `pwsh .\demo\evals.ps1` and check `PR_EVAL_PROFILE`. Unset or empty means full; only exact `full` and `quick` are accepted. A variable change affects future runs, not a queued run. |
+| Manual demo workflow is not listed | Confirm `demo-eval.yml` has been merged to the repository's default branch, then refresh Actions. |
+| Quick report says "not release approval" | This is expected. Merge invokes the separate full release evaluation; a manual demo evaluation never promotes. |
+| Workflow dispatch or profile setting is denied | Confirm `gh auth status`, repository permissions, and that the authorized user can manage Actions and repository variables. Do not treat an API failure as an unset variable. |
 | Gate fails on `judge_error_rate` | The judge model returned errors (usually 401: the CI identity lacks **Cognitive Services OpenAI User**, or a new role assignment is still propagating, which can take up to 30 min). The Foundry report shows the error per row. |
 | Push or PR is created as the wrong GitHub account | The scripts take `gh auth token -u $DEMO_GH_USER` (default `mjhoffmeister`) and use `gh` as the only git credential helper. Run `gh auth login` for that account. |
 | eval-gate job stays **Queued** | GitHub-hosted runner capacity. Wait or re-run; use the rehearsal runs as backup. |
