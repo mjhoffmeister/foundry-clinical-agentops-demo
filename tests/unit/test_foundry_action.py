@@ -92,6 +92,30 @@ def test_installed_sdk_supports_evaluator_version_operations():
         assert callable(project.evaluators.create_version)
 
 
+def test_evaluator_registration_opts_in_to_evaluations_preview(monkeypatch):
+    code = "def grade(sample, item): return 1.0"
+    calls = []
+
+    class Evaluators:
+        def get_version(self, **kwargs):
+            calls.append(("get", kwargs))
+            if len(calls) == 1:
+                raise action.ResourceNotFoundError("not registered")
+            return SimpleNamespace(definition=SimpleNamespace(as_dict=lambda: {"code_text": code}))
+
+        def create_version(self, **kwargs):
+            calls.append(("create", kwargs))
+
+    monkeypatch.setattr(action.time, "sleep", lambda _: None)
+    project = SimpleNamespace(evaluators=Evaluators())
+
+    name = action.register_evaluator(project, "source_hit", code)
+
+    assert name.startswith("clinical_source_hit_")
+    assert [operation for operation, _ in calls] == ["get", "create", "get"]
+    assert all(kwargs["headers"] == {"Foundry-Features": "Evaluations=V1Preview"} for _, kwargs in calls)
+
+
 
 @pytest.mark.parametrize("metric", graders.CODE_METRICS)
 @pytest.mark.parametrize("row,body,meta", [

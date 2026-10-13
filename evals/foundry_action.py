@@ -30,6 +30,7 @@ from validator import strip_trailer  # noqa: E402
 
 QUALITY = ("groundedness", "response_completeness", "task_adherence")
 STATE_FILE = "action-state.json"
+EVALUATIONS_FEATURE_HEADER = {"Foundry-Features": "Evaluations=V1Preview"}
 
 
 class ActionContractError(ValueError):
@@ -153,7 +154,9 @@ def grade(sample, item) -> float:
 def register_evaluator(project: AIProjectClient, metric: str, code: str) -> str:
     name = f"clinical_{metric}_{hashlib.sha256(code.encode()).hexdigest()[:16]}"
     try:
-        existing = project.evaluators.get_version(name=name, version="latest")
+        existing = project.evaluators.get_version(
+            name=name, version="latest", headers=EVALUATIONS_FEATURE_HEADER
+        )
     except ResourceNotFoundError:
         definition = {
             "name": name,
@@ -179,14 +182,18 @@ def register_evaluator(project: AIProjectClient, metric: str, code: str) -> str:
             },
         }
         try:
-            project.evaluators.create_version(name=name, evaluator_version=definition)
+            project.evaluators.create_version(
+                name=name, evaluator_version=definition, headers=EVALUATIONS_FEATURE_HEADER
+            )
         except HttpResponseError as exc:
             if exc.status_code != 409:
                 raise
         deadline = time.monotonic() + 180
         while True:
             try:
-                existing = project.evaluators.get_version(name=name, version="latest")
+                existing = project.evaluators.get_version(
+                    name=name, version="latest", headers=EVALUATIONS_FEATURE_HEADER
+                )
                 break
             except ResourceNotFoundError:
                 if time.monotonic() >= deadline:
